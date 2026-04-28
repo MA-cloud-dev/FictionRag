@@ -11,8 +11,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BOOK_PATH = PROJECT_ROOT / "data" / "novels" / "book.txt"
 DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "index" / "chunks.jsonl"
 DEFAULT_TOP_K = 5
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 800
+CHUNK_MAX_SIZE = 1000
+CHUNK_OVERLAP = 3
 DOTENV_PATH = PROJECT_ROOT / ".env"
 
 

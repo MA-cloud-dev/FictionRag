@@ -56,5 +56,13 @@ def _chunk_from_dict(raw: dict[str, Any]) -> Chunk:
         start=int(raw["start"]),
         end=int(raw["end"]),
         text=str(raw["text"]),
+        chapter_title=(
+            str(raw["chapter_title"])
+            if raw.get("chapter_title") is not None
+            else None
+        ),
+        chapter_index=int(raw.get("chapter_index", 0)),
+        scene_index=int(raw.get("scene_index", 0)),
+        scene_id=str(raw.get("scene_id", "scene-000")),
         embedding=embedding,
     )

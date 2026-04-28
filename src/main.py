@@ -12,6 +12,7 @@ if __package__ in {None, ""}:
     from src.chunker import build_chunks
     from src.config import (
         CHUNK_OVERLAP,
+        CHUNK_MAX_SIZE,
         CHUNK_SIZE,
         DEFAULT_BOOK_PATH,
         DEFAULT_INDEX_PATH,
@@ -35,6 +36,7 @@ else:
     from .chunker import build_chunks
     from .config import (
         CHUNK_OVERLAP,
+        CHUNK_MAX_SIZE,
         CHUNK_SIZE,
         DEFAULT_BOOK_PATH,
         DEFAULT_INDEX_PATH,
@@ -135,6 +137,7 @@ def run_index(args: argparse.Namespace) -> int:
         book_name=book_name,
         chunk_size=CHUNK_SIZE,
         overlap=CHUNK_OVERLAP,
+        max_chunk_size=CHUNK_MAX_SIZE,
     )
 
     embedding_client = EmbeddingClient(load_embedding_config())
