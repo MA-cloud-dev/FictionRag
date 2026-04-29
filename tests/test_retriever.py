@@ -157,3 +157,65 @@ def test_bm25_seed_participates_in_scene_expansion():
     )
 
     assert [result.chunk_id for result in results] == ["two-before", "before", "seed"]
+
+
+def test_rescue_slot_preserves_top_four_and_replaces_only_fifth():
+    chunks = [
+        make_chunk("one", [1.0, 0.0], chunk_index=1, scene_id="scene-a", text="普通段落一"),
+        make_chunk("two", [1.0, 0.0], chunk_index=2, scene_id="scene-a", text="普通段落二"),
+        make_chunk("three", [1.0, 0.0], chunk_index=3, scene_id="scene-a", text="普通段落三"),
+        make_chunk("four", [1.0, 0.0], chunk_index=4, scene_id="scene-a", text="普通段落四"),
+        make_chunk("five", [1.0, 0.0], chunk_index=5, scene_id="scene-a", text="普通段落五"),
+        make_chunk(
+            "rescue",
+            [0.0, 1.0],
+            chunk_index=10,
+            scene_id="scene-b",
+            text="线索显示小偷留下痕迹，瑞杰路德追上去教训了对方。",
+        ),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=5,
+        vector_top_n=5,
+        top_scene_count=1,
+        query_text="是谁发现小偷的痕迹并追上去教训了对方",
+    )
+
+    assert [result.chunk_id for result in results] == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "rescue",
+    ]
+
+
+def test_rescue_slot_keeps_fifth_without_strong_evidence():
+    chunks = [
+        make_chunk("one", [1.0, 0.0], chunk_index=1, scene_id="scene-a", text="普通段落一"),
+        make_chunk("two", [1.0, 0.0], chunk_index=2, scene_id="scene-a", text="普通段落二"),
+        make_chunk("three", [1.0, 0.0], chunk_index=3, scene_id="scene-a", text="普通段落三"),
+        make_chunk("four", [1.0, 0.0], chunk_index=4, scene_id="scene-a", text="普通段落四"),
+        make_chunk("five", [1.0, 0.0], chunk_index=5, scene_id="scene-a", text="普通段落五"),
+        make_chunk("weak", [0.0, 1.0], chunk_index=10, scene_id="scene-b", text="没有相关线索"),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=5,
+        vector_top_n=5,
+        top_scene_count=1,
+        query_text="是谁发现小偷的痕迹并追上去教训了对方",
+    )
+
+    assert [result.chunk_id for result in results] == [
+        "one",
+        "two",
+        "three",
+        "four",
+        "five",
+    ]
