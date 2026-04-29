@@ -262,7 +262,10 @@ def _apply_rescue_slot(
     locked_ids = {result.chunk_id for result in locked_results}
 
     result_by_id = {result.chunk_id: result for result in fused_results}
-    chunks_by_index = {chunk.chunk_index: chunk for chunk in chunks}
+    chunks_by_position = {
+        (chunk.book_name, chunk.chunk_index): chunk
+        for chunk in chunks
+    }
     chunk_by_id = {chunk.id: chunk for chunk in chunks}
     vector_scores = {result.chunk_id: result.score for result in vector_results[:vector_top_n]}
     bm25_top_ids = [
@@ -281,7 +284,7 @@ def _apply_rescue_slot(
         if seed is None:
             continue
         for offset in range(-neighbor_before, neighbor_after + 1):
-            chunk = chunks_by_index.get(seed.chunk_index + offset)
+            chunk = chunks_by_position.get((seed.book_name, seed.chunk_index + offset))
             if chunk is not None:
                 candidate_ids.add(chunk.id)
 
@@ -550,25 +553,28 @@ def _expand_by_scene(
     if not candidates:
         return []
 
-    scene_scores: dict[str, float] = {}
-    scene_best_rank: dict[str, int] = {}
-    scene_candidates: dict[str, list[RetrievalResult]] = defaultdict(list)
+    scene_scores: dict[tuple[str, str], float] = {}
+    scene_best_rank: dict[tuple[str, str], int] = {}
+    scene_candidates: dict[tuple[str, str], list[RetrievalResult]] = defaultdict(list)
     for rank, result in enumerate(candidates, start=1):
-        scene_id = result.chunk.scene_id
-        scene_candidates[scene_id].append(result)
-        if scene_id not in scene_scores or result.score > scene_scores[scene_id]:
-            scene_scores[scene_id] = result.score
-            scene_best_rank[scene_id] = rank
+        scene_key = (result.chunk.book_name, result.chunk.scene_id)
+        scene_candidates[scene_key].append(result)
+        if scene_key not in scene_scores or result.score > scene_scores[scene_key]:
+            scene_scores[scene_key] = result.score
+            scene_best_rank[scene_key] = rank
 
     selected_scenes = sorted(
         scene_scores,
-        key=lambda scene_id: (-scene_scores[scene_id], scene_best_rank[scene_id]),
+        key=lambda scene_key: (-scene_scores[scene_key], scene_best_rank[scene_key]),
     )[:top_scene_count]
 
-    chunks_by_scene: dict[str, list[Chunk]] = defaultdict(list)
-    chunks_by_index = {chunk.chunk_index: chunk for chunk in chunks}
+    chunks_by_scene: dict[tuple[str, str], list[Chunk]] = defaultdict(list)
+    chunks_by_position = {
+        (chunk.book_name, chunk.chunk_index): chunk
+        for chunk in chunks
+    }
     for chunk in chunks:
-        chunks_by_scene[chunk.scene_id].append(chunk)
+        chunks_by_scene[(chunk.book_name, chunk.scene_id)].append(chunk)
     for scene_chunks in chunks_by_scene.values():
         scene_chunks.sort(key=lambda chunk: chunk.chunk_index)
 
@@ -581,12 +587,16 @@ def _expand_by_scene(
         selected_ids.add(chunk.id)
         selected_order.append(chunk.id)
 
-    for scene_id in selected_scenes:
-        for result in scene_candidates.get(scene_id, []):
+    for scene_key in selected_scenes:
+        for result in scene_candidates.get(scene_key, []):
             for offset in range(-neighbor_before, neighbor_after + 1):
-                add_chunk(chunks_by_index.get(result.chunk.chunk_index + offset))
+                add_chunk(
+                    chunks_by_position.get(
+                        (result.chunk.book_name, result.chunk.chunk_index + offset)
+                    )
+                )
 
-        for chunk in chunks_by_scene.get(scene_id, []):
+        for chunk in chunks_by_scene.get(scene_key, []):
             add_chunk(chunk)
 
     result_by_id = {result.chunk_id: result for result in results}
@@ -596,5 +606,5 @@ def _expand_by_scene(
         if chunk_id in result_by_id
     ][:top_k]
 
-    expanded.sort(key=lambda result: result.chunk.chunk_index)
+    expanded.sort(key=lambda result: (result.chunk.book_name, result.chunk.chunk_index))
     return expanded

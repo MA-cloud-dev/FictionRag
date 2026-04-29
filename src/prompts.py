@@ -16,7 +16,8 @@ def build_context(results: list[RetrievalResult]) -> str:
     sections: list[str] = []
     for index, result in enumerate(results, start=1):
         sections.append(
-            f"[片段 {index} | chunk_id={result.chunk_id} | score={result.score:.4f}]\n"
+            f"[片段 {index} | book={result.chunk.book_name} | "
+            f"chunk_id={result.chunk_id} | score={result.score:.4f}]\n"
             f"{result.text}"
         )
     return "\n\n".join(sections)
@@ -30,7 +31,8 @@ def build_user_prompt(question: str, results: list[RetrievalResult]) -> str:
 1. 只能使用“小说原文片段”中的信息。
 2. 不要使用常识、猜测或其他作品的信息补充答案。
 3. 如果原文片段中没有足够信息回答，请明确回答：“原文中没有足够信息确认。”
-4. 回答应简洁，并尽量指出依据来自哪些片段编号。
+4. 如果多个片段来自不同书籍，不要把不同书籍的剧情、人物、设定混合成一个事实。
+5. 回答应简洁，并尽量指出依据来自哪些片段编号。
 
 小说原文片段：
 {context}

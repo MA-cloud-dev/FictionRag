@@ -8,10 +8,11 @@ def make_chunk(
     chunk_index: int = 1,
     scene_id: str = "scene-000",
     text: str | None = None,
+    book_name: str = "book",
 ) -> Chunk:
     return Chunk(
         id=chunk_id,
-        book_name="book",
+        book_name=book_name,
         chunk_index=chunk_index,
         start=0,
         end=1,
@@ -219,3 +220,84 @@ def test_rescue_slot_keeps_fifth_without_strong_evidence():
         "four",
         "five",
     ]
+
+
+def test_scene_expansion_does_not_merge_same_scene_id_across_books():
+    chunks = [
+        make_chunk(
+            "book-a-seed",
+            [1.0, 0.0],
+            chunk_index=1,
+            scene_id="chapter-001-scene-000",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-a-after",
+            [0.9, 0.1],
+            chunk_index=2,
+            scene_id="chapter-001-scene-000",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-b-same-scene",
+            [0.8, 0.2],
+            chunk_index=1,
+            scene_id="chapter-001-scene-000",
+            book_name="book-b",
+        ),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=3,
+        vector_top_n=1,
+        top_scene_count=1,
+    )
+
+    assert [result.chunk_id for result in results] == ["book-a-seed", "book-a-after"]
+
+
+def test_neighbor_expansion_does_not_cross_books_with_same_chunk_index():
+    chunks = [
+        make_chunk(
+            "book-a-before",
+            [0.7, 0.3],
+            chunk_index=1,
+            scene_id="scene-a",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-a-seed",
+            [1.0, 0.0],
+            chunk_index=2,
+            scene_id="scene-a",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-b-before",
+            [0.6, 0.4],
+            chunk_index=1,
+            scene_id="scene-b",
+            book_name="book-b",
+        ),
+        make_chunk(
+            "book-b-after",
+            [0.5, 0.5],
+            chunk_index=3,
+            scene_id="scene-b",
+            book_name="book-b",
+        ),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=3,
+        vector_top_n=1,
+        top_scene_count=1,
+        neighbor_before=1,
+        neighbor_after=1,
+    )
+
+    assert [result.chunk_id for result in results] == ["book-a-before", "book-a-seed"]

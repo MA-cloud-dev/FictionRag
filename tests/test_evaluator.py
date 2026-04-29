@@ -7,17 +7,18 @@ from src.evaluator import (
     compute_metrics,
     find_gold_rank,
     load_dataset,
+    sample_chunks_by_book,
     save_dataset,
 )
 from src.retriever import RetrievalResult
 from src.chunker import Chunk
 
 
-def make_chunk(chunk_id: str) -> Chunk:
+def make_chunk(chunk_id: str, book_name: str = "book", chunk_index: int = 1) -> Chunk:
     return Chunk(
         id=chunk_id,
-        book_name="book",
-        chunk_index=1,
+        book_name=book_name,
+        chunk_index=chunk_index,
         start=0,
         end=10,
         text=f"text {chunk_id}",
@@ -103,3 +104,23 @@ def test_dataset_jsonl_round_trip(tmp_path: Path):
     loaded = load_dataset(path)
 
     assert loaded == dataset
+
+
+def test_sample_chunks_by_book_uses_exact_requested_counts():
+    chunks = [
+        make_chunk(f"book-{index:06d}", book_name="book", chunk_index=index)
+        for index in range(30)
+    ] + [
+        make_chunk(f"第十卷-{index:06d}", book_name="第十卷", chunk_index=index)
+        for index in range(30)
+    ]
+
+    sampled = sample_chunks_by_book(
+        chunks,
+        samples_per_book={"book": 25, "第十卷": 25},
+        seed=42,
+    )
+
+    assert len(sampled) == 50
+    assert sum(chunk.book_name == "book" for chunk in sampled) == 25
+    assert sum(chunk.book_name == "第十卷" for chunk in sampled) == 25

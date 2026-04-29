@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import random
 import re
+from collections import defaultdict
 from dataclasses import asdict, dataclass
 from datetime import datetime
 from pathlib import Path
@@ -31,6 +32,7 @@ class EvalItem:
     gold_chunk_id: str
     reference_answer: str
     gold_text_preview: str
+    gold_book_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -38,6 +40,7 @@ class RetrievedChunk:
     chunk_id: str
     score: float
     text_preview: str
+    book_name: str | None = None
 
 
 @dataclass(frozen=True)
@@ -51,6 +54,7 @@ class EvalResult:
     hit_at_3: bool
     hit_at_5: bool
     reciprocal_rank: float
+    gold_book_name: str | None = None
 
 
 def run_evaluation(
@@ -62,6 +66,7 @@ def run_evaluation(
     force_generate: bool,
     llm_client: LLMClient,
     embedding_client: EmbeddingClient,
+    samples_per_book: dict[str, int] | None = None,
 ) -> dict[str, Any]:
     if sample_size <= 0:
         raise ValueError("sample_size must be greater than 0")
@@ -84,6 +89,7 @@ def run_evaluation(
             llm_client=llm_client,
             sample_size=sample_size,
             seed=seed,
+            samples_per_book=samples_per_book,
         )
         if not dataset:
             raise ValueError("No valid eval items were generated.")
@@ -111,6 +117,7 @@ def run_evaluation(
         dataset_reused=dataset_reused,
         embedding_model=embedding_client.config.model,
         llm_model=llm_client.config.model,
+        samples_per_book=samples_per_book,
     )
     summary_path.write_text(summary_markdown, encoding="utf-8")
 
@@ -129,8 +136,13 @@ def generate_dataset(
     llm_client: LLMClient,
     sample_size: int,
     seed: int,
+    samples_per_book: dict[str, int] | None = None,
 ) -> tuple[list[EvalItem], list[str]]:
-    sampled_chunks = sample_chunks(chunks, sample_size=sample_size, seed=seed)
+    sampled_chunks = (
+        sample_chunks_by_book(chunks, samples_per_book=samples_per_book, seed=seed)
+        if samples_per_book
+        else sample_chunks(chunks, sample_size=sample_size, seed=seed)
+    )
     items: list[EvalItem] = []
     errors: list[str] = []
 
@@ -149,6 +161,7 @@ def generate_dataset(
                     gold_chunk_id=chunk.id,
                     reference_answer=reference_answer,
                     gold_text_preview=text_preview(chunk.text),
+                    gold_book_name=chunk.book_name,
                 )
             )
         except Exception as exc:  # Keep eval generation robust across single bad samples.
@@ -163,6 +176,31 @@ def sample_chunks(chunks: list[Chunk], sample_size: int, seed: int) -> list[Chun
     count = min(sample_size, len(chunks))
     rng = random.Random(seed)
     return rng.sample(chunks, count)
+
+
+def sample_chunks_by_book(
+    chunks: list[Chunk],
+    samples_per_book: dict[str, int],
+    seed: int,
+) -> list[Chunk]:
+    chunks_by_book: dict[str, list[Chunk]] = defaultdict(list)
+    for chunk in chunks:
+        chunks_by_book[chunk.book_name].append(chunk)
+
+    rng = random.Random(seed)
+    sampled: list[Chunk] = []
+    for book_name, count in samples_per_book.items():
+        if book_name not in chunks_by_book:
+            raise ValueError(f"No chunks found for book_name: {book_name}")
+        book_chunks = chunks_by_book[book_name]
+        if len(book_chunks) < count:
+            raise ValueError(
+                f"Not enough chunks for book_name {book_name}: "
+                f"requested {count}, available {len(book_chunks)}"
+            )
+        sampled.extend(rng.sample(book_chunks, count))
+    rng.shuffle(sampled)
+    return sampled
 
 
 def parse_json_object(content: str) -> dict[str, Any]:
@@ -210,6 +248,7 @@ def evaluate_dataset(
                         chunk_id=result.chunk_id,
                         score=result.score,
                         text_preview=text_preview(result.text),
+                        book_name=result.chunk.book_name,
                     )
                     for result in retrieved
                 ],
@@ -218,6 +257,7 @@ def evaluate_dataset(
                 hit_at_3=is_hit_at_k(gold_rank, 3),
                 hit_at_5=is_hit_at_k(gold_rank, 5),
                 reciprocal_rank=(1.0 / gold_rank) if gold_rank else 0.0,
+                gold_book_name=item.gold_book_name,
             )
         )
     return results
@@ -261,6 +301,26 @@ def compute_metrics(results: list[EvalResult], top_ks: tuple[int, ...]) -> dict[
     }
 
 
+def compute_metrics_by_book(
+    results: list[EvalResult],
+    top_ks: tuple[int, ...],
+) -> dict[str, dict[str, Any]]:
+    results_by_book: dict[str, list[EvalResult]] = defaultdict(list)
+    for result in results:
+        book_name = result.gold_book_name or _book_name_from_chunk_id(result.gold_chunk_id)
+        results_by_book[book_name].append(result)
+    return {
+        book_name: compute_metrics(book_results, top_ks)
+        for book_name, book_results in sorted(results_by_book.items())
+    }
+
+
+def _book_name_from_chunk_id(chunk_id: str) -> str:
+    if "-" not in chunk_id:
+        return "unknown"
+    return chunk_id.rsplit("-", 1)[0]
+
+
 def save_dataset(dataset: list[EvalItem], path: Path) -> None:
     save_jsonl([asdict(item) for item in dataset], path)
 
@@ -274,6 +334,11 @@ def load_dataset(path: Path) -> list[EvalItem]:
                 gold_chunk_id=str(raw["gold_chunk_id"]),
                 reference_answer=str(raw["reference_answer"]),
                 gold_text_preview=str(raw["gold_text_preview"]),
+                gold_book_name=(
+                    str(raw["gold_book_name"])
+                    if raw.get("gold_book_name") is not None
+                    else None
+                ),
             )
         )
     if not items:
@@ -315,11 +380,13 @@ def build_summary_markdown(
     dataset_reused: bool,
     embedding_model: str,
     llm_model: str,
+    samples_per_book: dict[str, int] | None = None,
 ) -> str:
     recall = metrics["recall"]
     average_rank = metrics["average_gold_rank"]
     average_rank_text = f"{average_rank:.2f}" if average_rank is not None else "N/A"
     misses = [result for result in results if result.gold_rank is None][:5]
+    metrics_by_book = compute_metrics_by_book(results, DEFAULT_TOP_KS)
 
     lines = [
         "# RAG Retrieval Evaluation Summary",
@@ -329,6 +396,7 @@ def build_summary_markdown(
         f"- Output dir: `{output_dir}`",
         f"- Dataset reused: `{dataset_reused}`",
         f"- Requested sample size: `{sample_size}`",
+        f"- Samples per book: `{samples_per_book or {}}`",
         f"- Effective sample count: `{len(dataset)}`",
         f"- Seed: `{seed}`",
         f"- Retrieval top_k: `{top_k}`",
@@ -347,6 +415,26 @@ def build_summary_markdown(
         f"| Average Gold Rank | {average_rank_text} | 只在命中的样本中计算 gold chunk 的平均排名。 |",
         f"| Missed Count | {metrics['missed_count']} | gold chunk 未出现在 Top {top_k} 的样本数量。 |",
         "",
+        "## Metrics by Book",
+        "",
+        "| Book | Samples | Recall@1 | Recall@3 | Recall@5 | MRR | Missed |",
+        "| --- | ---: | ---: | ---: | ---: | ---: | ---: |",
+    ]
+
+    for book_name, book_metrics in metrics_by_book.items():
+        book_recall = book_metrics["recall"]
+        lines.append(
+            f"| {book_name} | {book_metrics['sample_count']} | "
+            f"{book_recall['recall_at_1']:.2%} | "
+            f"{book_recall['recall_at_3']:.2%} | "
+            f"{book_recall['recall_at_5']:.2%} | "
+            f"{book_metrics['mrr']:.4f} | "
+            f"{book_metrics['missed_count']} |"
+        )
+
+    lines.extend(
+        [
+            "",
         "## Interpretation",
         "",
         "- Recall@1 高说明问题向量和原文 chunk 的语义匹配很直接，首条结果通常可用于回答。",
@@ -356,7 +444,8 @@ def build_summary_markdown(
         "",
         "## Failed Examples",
         "",
-    ]
+        ]
+    )
 
     if not misses:
         lines.append("No failed examples. All gold chunks were found within the evaluated Top K.")

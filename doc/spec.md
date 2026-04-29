@@ -39,7 +39,7 @@ FictionRag/
 - `src/chunker.py`：负责文本切片。
 - `src/embeddings.py`：负责调用 embedding API。
 - `src/index_store.py`：负责索引读写。
-- `src/retriever.py`：负责相似度召回。
+- `src/retriever.py`：负责 dense/BM25 两路召回、scene-expanded 后处理和第 5 位 rescue slot。
 - `src/llm.py`：负责调用 LLM API。
 - `src/prompts.py`：维护问答 prompt。
 
@@ -53,8 +53,13 @@ CHUNK_MAX_SIZE = 1000
 CHUNK_OVERLAP = 3
 TOP_K = 5
 VECTOR_TOP_N = 20
+BM25_TOP_N = 20
 TOP_SCENE_COUNT = 3
-NEIGHBOR_RADIUS = 1
+NEIGHBOR_BEFORE = 2
+NEIGHBOR_AFTER = 1
+VECTOR_SCORE_WEIGHT = 0.8
+BM25_SCORE_WEIGHT = 0.2
+RESCUE_SLOT_RANK = 5
 ```
 
 切片策略：
@@ -69,12 +74,14 @@ NEIGHBOR_RADIUS = 1
 
 召回策略：
 
-- 先计算所有 chunk 与问题向量的 cosine similarity。
-- 取向量分数最高的 `VECTOR_TOP_N = 20` 个候选。
+- 先计算所有 chunk 与问题向量的 cosine similarity，得到 dense top20。
+- 同时用原始问题文本执行 BM25 sparse 召回，得到 BM25 top20。
+- 对 dense 和 BM25 分数分别按本路最大分归一化，按 0.8:0.2 融合。
 - 按 `scene_id` 聚合候选，选出分数最高的 `TOP_SCENE_COUNT = 3` 个场景。
-- 对被选中场景里的命中 chunk 做前后 `NEIGHBOR_RADIUS = 1` 扩展。
+- 对被选中场景里的命中 chunk 做前 2 后 1 扩展。
 - 再补充同 scene 内的其他 chunk 作为上下文兜底。
 - 最终按原文 `chunk_index` 顺序返回 `TOP_K = 5` 个上下文片段。
+- 对 `top_k >= 5` 的 hybrid 召回，启用 rescue slot：锁定当前 Top4，只允许第 5 位被强 BM25/稀有词证据候选替换。
 
 ## 4. 数据结构
 
@@ -181,10 +188,12 @@ python -m src.main retrieve "主角第一次见到某人是什么时候？"
 1. 加载本地索引。
 2. 将用户问题向量化。
 3. 计算问题向量与所有 chunk 向量的 cosine similarity。
-4. 取向量 top20 候选，并按 scene 聚合。
-5. 对高分 scene 中的命中 chunk 做前后相邻扩展。
-6. 返回按原文顺序排列的 top_k 上下文片段。
-7. 打印 `chunk_id`、`score` 和片段文本。
+4. 使用原始问题文本执行 BM25 sparse 召回。
+5. 将 dense top20 与 BM25 top20 归一化融合。
+6. 按 scene 聚合，对高分 scene 中的命中 chunk 做前 2 后 1 相邻扩展。
+7. 在强证据存在时，用 rescue slot 替换第 5 位。
+8. 返回按原文顺序排列的 top_k 上下文片段。
+9. 打印 `chunk_id`、`score` 和片段文本。
 
 ### 5.3 ask
 
@@ -200,7 +209,7 @@ python -m src.main ask "主角第一次见到某人是什么时候？"
 
 1. 加载本地索引。
 2. 将用户问题向量化。
-3. 使用 scene-expanded 召回策略取 top_k 原文片段。
+3. 使用 hybrid dense+BM25、scene-expanded 和 rescue slot 策略取 top_k 原文片段。
 4. 拼接 prompt。
 5. 调用 LLM。
 6. 输出回答和引用片段。
@@ -285,20 +294,39 @@ score = dot(question_embedding, chunk_embedding) / (
 召回流程：
 
 1. 问题向量化。
-2. 遍历所有 chunk。
-3. 计算 cosine similarity。
-4. 按分数倒序排序，取 `VECTOR_TOP_N = 20` 个候选。
-5. 按候选的 `scene_id` 聚合，scene 分数使用该 scene 内最高 chunk 分数。
-6. 选出 top 3 个 scene。
-7. 对这些 scene 中进入 vector top20 的命中 chunk 做前后 1 个 chunk 扩展。
-8. 再补充同 scene 其他 chunk 作为上下文兜底。
-9. 最终按原文 `chunk_index` 顺序输出前 `TOP_K = 5` 个结果。
+2. 遍历所有 chunk，计算 cosine similarity，取 dense top20。
+3. 对问题文本和 chunk 正文执行 BM25，取 BM25 top20。
+4. 对 dense 分数和 BM25 分数分别按本路最大分归一化。
+5. 同一 chunk 的最终融合分数为 `0.8 * normalized_dense + 0.2 * normalized_bm25`。
+6. 按候选的 `scene_id` 聚合，scene 分数使用该 scene 内最高 chunk 分数。
+7. 选出 top 3 个 scene。
+8. 对这些 scene 中的命中 chunk 做前 2 后 1 扩展。
+9. 再补充同 scene 其他 chunk 作为上下文兜底。
+10. 得到 baseline Top5 后，锁定前 4 位。
+11. 第 5 位 rescue slot 从 dense top20、BM25 top20 及其前 2 后 1 邻居中选择强证据候选。
+12. 如果没有候选满足强 BM25 分数、稀有词覆盖率和分数 margin 要求，保留 baseline 第 5 位。
 
 设计取舍：
 
-- 优点：小说问答通常需要连续上下文，scene 扩展能补齐同一场景内的前因后果。
-- 风险：上下文可能更集中于少数 scene，降低跨场景问题的覆盖广度。
-- 当前策略更适合局部剧情、人物行动原因、单场景细节问答；跨章节/跨场景对比问题后续可增加 hybrid retrieval 或 rerank。
+- 优点：dense 保留语义泛化，BM25 补充精确关键词，scene 扩展补齐局部剧情上下文。
+- 风险：scene 扩展会挤压 Top5 空间，因此 rescue slot 只替换第 5 位，避免破坏已命中的高置信 Top4。
+- 当前策略更适合局部剧情、人物行动原因、单场景细节问答；跨章节/跨场景对比问题后续可增加 rerank 或章节级摘要。
+
+### 6.5 BM25 分词与 rescue slot
+
+BM25 不引入第三方依赖，直接在 `src/retriever.py` 中实现。
+
+- 中文文本按连续 CJK 字符生成 2-4 gram。
+- 英文和数字按连续 token 保留并转小写。
+- BM25 参数固定为 `k1=1.5`、`b=0.75`。
+- BM25 只索引 `chunk.text`，不拼接 chapter/scene metadata。
+
+rescue slot 的目标不是全局重排，而是低风险补救：
+
+- 只在 `query_text` 非空且 `top_k >= 5` 时启用。
+- baseline Top4 完全保留。
+- 第 5 位候选来自 dense top20、BM25 top20 及其邻居。
+- 候选必须同时满足 BM25 归一化分数、稀有词覆盖率和相对 baseline 第 5 位的分数 margin。
 
 ## 7. Prompt 设计
 
@@ -407,6 +435,8 @@ MVP 阶段只需要处理关键错误：
 - 期望至少一个片段与问题相关。
 - 期望输出包含 `chunk_id` 和 `score`。
 - 期望局部剧情问题能召回同 scene 或相邻 chunk 上下文。
+- 期望精确关键词问题能通过 BM25 进入候选池。
+- 期望 rescue slot 不改变 baseline Top4。
 
 ### 11.3 完整问答
 
@@ -427,6 +457,16 @@ MVP 阶段只需要处理关键错误：
 - 期望第二次运行覆盖旧索引。
 - 期望索引文件中不会出现重复数据累积。
 
+### 11.6 当前评测基线
+
+当前保留以下评测目录：
+
+- `rag_eval_scene_expanded`：早期 scene-expanded 基线。
+- `rag_eval_bm25_weight_8_2_neighbor_2_1`：rescue 前最佳结果与错误分析。
+- `rag_eval_bm25_weight_8_2_neighbor_2_1_corrected_gold`：修正 gold 后的 baseline 对照。
+- `rag_eval_hybrid_rescue_slot`：当前原始 dataset 最佳结果，Recall@5 91.84%，Missed Count 4。
+- `rag_eval_hybrid_rescue_slot_corrected_gold`：当前 corrected-gold 最佳结果，Recall@5 95.92%，Missed Count 2。
+
 ## 12. 后续技术优化
 
 MVP 后可以逐步增加：
@@ -434,9 +474,9 @@ MVP 后可以逐步增加：
 - 使用向量数据库，例如 FAISS、Chroma、Milvus。
 - 增强章节解析和章节名引用。
 - 增加 chunk overlap、chunk size 的可配置能力。
-- 增加 hybrid retrieval，避免上下文过度集中于单一场景。
+- 继续优化 hybrid retrieval，避免上下文过度集中于单一场景。
 - 增加同 scene 聚合分数策略，例如 top1/top2/top3 加权，而不是只取 scene 内最高分。
-- 增加 rerank 模型。
+- 对 rescue slot 覆盖不到的问题增加轻量 rerank 或 rerank 模型。
 - 增加前端页面。
 - 增加 API 服务层。
 - 增加问答日志和人工评测。

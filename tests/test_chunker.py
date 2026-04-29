@@ -31,6 +31,25 @@ def test_build_chunks_uses_chapter_and_scene_metadata():
     assert chunks[1].scene_id == "chapter-001-scene-001"
 
 
+def test_build_chunks_recognizes_prologue_and_epilogue_titles():
+    text = "\n\n".join(
+        [
+            "少年期 家庭教师 序章",
+            "序章正文。",
+            "终章",
+            "终章正文。",
+        ]
+    )
+
+    chunks = build_chunks(text, book_name="book", chunk_size=20, max_chunk_size=40, overlap=1)
+
+    assert len(chunks) == 2
+    assert chunks[0].chapter_title == "少年期 家庭教师 序章"
+    assert chunks[0].text == "序章正文。"
+    assert chunks[1].chapter_title == "终章"
+    assert chunks[1].text == "终章正文。"
+
+
 def test_split_text_keeps_scene_boundaries():
     text = "\n\n".join(
         [

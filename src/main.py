@@ -28,6 +28,7 @@ if __package__ in {None, ""}:
         DEFAULT_SEED,
         run_evaluation,
     )
+    from src.epub_importer import EpubImportError, import_epub_to_text
     from src.index_store import IndexStoreError, load_chunks, save_chunks
     from src.llm import LLMClient
     from src.prompts import build_user_prompt
@@ -52,6 +53,7 @@ else:
         DEFAULT_SEED,
         run_evaluation,
     )
+    from .epub_importer import EpubImportError, import_epub_to_text
     from .index_store import IndexStoreError, load_chunks, save_chunks
     from .llm import LLMClient
     from .prompts import build_user_prompt
@@ -74,7 +76,9 @@ def main(argv: list[str] | None = None) -> int:
             return run_ask(args)
         if args.command == "eval":
             return run_eval(args)
-    except (ConfigError, APIError, IndexStoreError, OSError, ValueError) as exc:
+        if args.command == "import-epub":
+            return run_import_epub(args)
+    except (ConfigError, APIError, EpubImportError, IndexStoreError, OSError, ValueError) as exc:
         print(f"Error: {exc}", file=sys.stderr)
         return 1
 
@@ -87,7 +91,17 @@ def build_parser() -> argparse.ArgumentParser:
     subparsers = parser.add_subparsers(dest="command", required=True)
 
     index_parser = subparsers.add_parser("index", help="Build local JSONL index")
-    index_parser.add_argument("--book", required=True, help="Path to the novel .txt file")
+    index_parser.add_argument(
+        "--book",
+        action="append",
+        required=True,
+        help="Path to a novel .txt file. Repeat to build a multi-book index.",
+    )
+    index_parser.add_argument(
+        "--book-name",
+        action="append",
+        help="Book name for the matching --book. Repeat in the same order as --book.",
+    )
     index_parser.add_argument(
         "--index-path",
         default=str(DEFAULT_INDEX_PATH),
@@ -108,6 +122,13 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--index-path", default=str(DEFAULT_INDEX_PATH))
     eval_parser.add_argument("--output-dir", default=str(DEFAULT_EVAL_DIR))
     eval_parser.add_argument("--sample-size", type=int, default=DEFAULT_SAMPLE_SIZE)
+    eval_parser.add_argument(
+        "--sample-per-book",
+        action="append",
+        default=[],
+        metavar="BOOK=COUNT",
+        help="Stratified eval sampling count per book_name. Repeat for multiple books.",
+    )
     eval_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     eval_parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     eval_parser.add_argument(
@@ -116,29 +137,39 @@ def build_parser() -> argparse.ArgumentParser:
         help="Regenerate dataset.jsonl even if it already exists",
     )
 
+    import_parser = subparsers.add_parser("import-epub", help="Clean an EPUB into plain text")
+    import_parser.add_argument("--epub", required=True, help="Path to the source EPUB file")
+    import_parser.add_argument("--output", required=True, help="Output .txt path")
+
     return parser
 
 
 def run_index(args: argparse.Namespace) -> int:
-    book_path = Path(args.book)
     index_path = Path(args.index_path)
-    if not book_path.exists():
-        raise FileNotFoundError(f"Novel file does not exist: {book_path}")
-    if not book_path.is_file():
-        raise ValueError(f"Novel path is not a file: {book_path}")
+    book_paths = [Path(book) for book in args.book]
+    book_names = _resolve_book_names(book_paths, getattr(args, "book_name", None))
 
-    text = book_path.read_text(encoding="utf-8")
-    if not text:
-        raise ValueError(f"Novel file is empty: {book_path}")
+    chunks = []
+    book_chunk_counts: list[tuple[Path, str, int]] = []
+    for book_path, book_name in zip(book_paths, book_names):
+        if not book_path.exists():
+            raise FileNotFoundError(f"Novel file does not exist: {book_path}")
+        if not book_path.is_file():
+            raise ValueError(f"Novel path is not a file: {book_path}")
 
-    book_name = book_path.stem
-    chunks = build_chunks(
-        text,
-        book_name=book_name,
-        chunk_size=CHUNK_SIZE,
-        overlap=CHUNK_OVERLAP,
-        max_chunk_size=CHUNK_MAX_SIZE,
-    )
+        text = book_path.read_text(encoding="utf-8")
+        if not text:
+            raise ValueError(f"Novel file is empty: {book_path}")
+
+        book_chunks = build_chunks(
+            text,
+            book_name=book_name,
+            chunk_size=CHUNK_SIZE,
+            overlap=CHUNK_OVERLAP,
+            max_chunk_size=CHUNK_MAX_SIZE,
+        )
+        chunks.extend(book_chunks)
+        book_chunk_counts.append((book_path, book_name, len(book_chunks)))
 
     embedding_client = EmbeddingClient(load_embedding_config())
     embeddings = embedding_client.embed_texts([chunk.text for chunk in chunks])
@@ -148,7 +179,9 @@ def run_index(args: argparse.Namespace) -> int:
     ]
 
     save_chunks(embedded_chunks, index_path)
-    print(f"Indexed {len(embedded_chunks)} chunks from {book_path}")
+    print(f"Indexed {len(embedded_chunks)} chunks from {len(book_chunk_counts)} book(s)")
+    for book_path, book_name, count in book_chunk_counts:
+        print(f"- {book_name}: {count} chunks from {book_path}")
     print(f"Index saved to {index_path}")
     return 0
 
@@ -186,6 +219,7 @@ def run_ask(args: argparse.Namespace) -> int:
 def run_eval(args: argparse.Namespace) -> int:
     llm_client = LLMClient(load_llm_config())
     embedding_client = EmbeddingClient(load_embedding_config())
+    samples_per_book = _parse_sample_per_book(args.sample_per_book)
     summary = run_evaluation(
         index_path=Path(args.index_path),
         output_dir=Path(args.output_dir),
@@ -195,6 +229,7 @@ def run_eval(args: argparse.Namespace) -> int:
         force_generate=args.force_generate,
         llm_client=llm_client,
         embedding_client=embedding_client,
+        samples_per_book=samples_per_book,
     )
     metrics = summary["metrics"]
     recall = metrics["recall"]
@@ -207,6 +242,17 @@ def run_eval(args: argparse.Namespace) -> int:
     print(f"Recall@5: {recall['recall_at_5']:.2%}")
     print(f"MRR: {metrics['mrr']:.4f}")
     print(f"Summary: {summary['summary_path']}")
+    return 0
+
+
+def run_import_epub(args: argparse.Namespace) -> int:
+    paragraph_count, character_count = import_epub_to_text(
+        epub_path=Path(args.epub),
+        output_path=Path(args.output),
+    )
+    print(f"Imported EPUB to {args.output}")
+    print(f"Paragraphs: {paragraph_count}")
+    print(f"Characters: {character_count}")
     return 0
 
 
@@ -269,7 +315,8 @@ def _interactive_retrieve() -> None:
 
 def _interactive_index() -> None:
     args = argparse.Namespace(
-        book=str(DEFAULT_BOOK_PATH),
+        book=[str(DEFAULT_BOOK_PATH)],
+        book_name=None,
         index_path=str(DEFAULT_INDEX_PATH),
     )
     print(f"Building index from: {DEFAULT_BOOK_PATH}")
@@ -301,6 +348,41 @@ def _retrieve_for_question(
     return retrieve(question_embedding, chunks, top_k=top_k, query_text=question)
 
 
+def _resolve_book_names(book_paths: list[Path], book_names: list[str] | None) -> list[str]:
+    if not book_names:
+        return [book_path.stem for book_path in book_paths]
+    if len(book_names) != len(book_paths):
+        raise ValueError("--book-name must be provided once for each --book")
+    resolved = [book_name.strip() for book_name in book_names]
+    if any(not book_name for book_name in resolved):
+        raise ValueError("--book-name cannot be empty")
+    if len(set(resolved)) != len(resolved):
+        raise ValueError("--book-name values must be unique within one index")
+    return resolved
+
+
+def _parse_sample_per_book(values: list[str]) -> dict[str, int] | None:
+    if not values:
+        return None
+
+    samples_per_book: dict[str, int] = {}
+    for value in values:
+        if "=" not in value:
+            raise ValueError("--sample-per-book must use BOOK=COUNT format")
+        book_name, raw_count = value.split("=", 1)
+        book_name = book_name.strip()
+        if not book_name:
+            raise ValueError("--sample-per-book book name cannot be empty")
+        try:
+            count = int(raw_count)
+        except ValueError as exc:
+            raise ValueError("--sample-per-book count must be an integer") from exc
+        if count <= 0:
+            raise ValueError("--sample-per-book count must be greater than 0")
+        samples_per_book[book_name] = count
+    return samples_per_book
+
+
 def print_retrieval_results(
     results: list[RetrievalResult],
     top_k: int,
@@ -315,7 +397,10 @@ def print_retrieval_results(
         return
 
     for index, result in enumerate(results, start=1):
-        print(f"[{index}] chunk_id={result.chunk_id} score={result.score:.4f}")
+        print(
+            f"[{index}] book={result.chunk.book_name} "
+            f"chunk_id={result.chunk_id} score={result.score:.4f}"
+        )
         print(result.text)
         print()
 

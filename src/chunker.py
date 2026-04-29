@@ -13,7 +13,9 @@ DEFAULT_OVERLAP_PARAGRAPHS = 3
 _CHAPTER_PATTERN = re.compile(
     r"^第.+?(?:卷|章)\s+.+?(?:第[一二三四五六七八九十百千万零〇\d]+话|闲话).*$"
     r"|^第[一二三四五六七八九十百千万零〇\d]+话.*$"
+    r"|^(?:.+\s+)?(?:序章|终章)$"
     r"|^闲话.*$"
+    r"|^外传.*$"
 )
 _SCENE_SEPARATOR = "★★★"
 _SENTENCE_BOUNDARY_PATTERN = re.compile(r"(?<=[。！？!?])")
