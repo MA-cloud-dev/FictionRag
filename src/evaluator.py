@@ -193,7 +193,12 @@ def evaluate_dataset(
     results: list[EvalResult] = []
     question_embeddings = embedding_client.embed_texts([item.question for item in dataset])
     for item, question_embedding in zip(dataset, question_embeddings):
-        retrieved = retrieve(question_embedding, chunks, top_k=top_k)
+        retrieved = retrieve(
+            question_embedding,
+            chunks,
+            top_k=top_k,
+            query_text=item.question,
+        )
         gold_rank = find_gold_rank(item.gold_chunk_id, retrieved)
         results.append(
             EvalResult(

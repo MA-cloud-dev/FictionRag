@@ -4,4 +4,4 @@ __pycache__/
 *.py[cod]
 .env
 data/index/*.jsonl
-rag_eval/
+rag_eval_root/rag_eval/

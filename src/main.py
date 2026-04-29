@@ -298,7 +298,7 @@ def _retrieve_for_question(
     chunks = load_chunks(index_path)
     embedding_client = EmbeddingClient(load_embedding_config())
     question_embedding = embedding_client.embed_text(question)
-    return retrieve(question_embedding, chunks, top_k=top_k)
+    return retrieve(question_embedding, chunks, top_k=top_k, query_text=question)
 
 
 def print_retrieval_results(

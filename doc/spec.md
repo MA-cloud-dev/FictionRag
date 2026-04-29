@@ -45,20 +45,36 @@ FictionRag/
 
 ## 3. 核心参数
 
-MVP 阶段固定使用以下参数：
+当前阶段固定使用以下参数：
 
 ```python
-CHUNK_SIZE = 1000
-CHUNK_OVERLAP = 200
+CHUNK_SIZE = 800
+CHUNK_MAX_SIZE = 1000
+CHUNK_OVERLAP = 3
 TOP_K = 5
+VECTOR_TOP_N = 20
+TOP_SCENE_COUNT = 3
+NEIGHBOR_RADIUS = 1
 ```
 
 切片策略：
 
-- 每个 chunk 约 1000 字。
-- 相邻 chunk 保留 200 字重叠内容。
-- 步长为 `CHUNK_SIZE - CHUNK_OVERLAP`，即 800 字。
-- 暂不做章节识别、语义切分或标点边界优化。
+- 使用结构感知切分，而不是固定字符窗口。
+- 章节标题作为 metadata，不单独生成可召回 chunk。
+- 独立一行的 `★★★` 作为场景边界，不单独生成可召回 chunk。
+- 基础单位为非空自然段/行，按原文顺序聚合到目标约 800 字。
+- 单个自然段超过 1000 字时，按中文/英文句末标点兜底切分。
+- 同一场景内相邻 chunk 默认重叠最后 3 个自然段。
+- overlap 不跨章节边界，也不跨 `★★★` 场景边界。
+
+召回策略：
+
+- 先计算所有 chunk 与问题向量的 cosine similarity。
+- 取向量分数最高的 `VECTOR_TOP_N = 20` 个候选。
+- 按 `scene_id` 聚合候选，选出分数最高的 `TOP_SCENE_COUNT = 3` 个场景。
+- 对被选中场景里的命中 chunk 做前后 `NEIGHBOR_RADIUS = 1` 扩展。
+- 再补充同 scene 内的其他 chunk 作为上下文兜底。
+- 最终按原文 `chunk_index` 顺序返回 `TOP_K = 5` 个上下文片段。
 
 ## 4. 数据结构
 
@@ -69,9 +85,13 @@ TOP_K = 5
   "id": "book-000001",
   "book_name": "book",
   "chunk_index": 1,
-  "start": 0,
-  "end": 1000,
+  "start": 25,
+  "end": 271,
   "text": "小说原文片段",
+  "chapter_title": "第四卷 少年期冒险者入门篇 第一话「温恩港」",
+  "chapter_index": 1,
+  "scene_index": 0,
+  "scene_id": "chapter-001-scene-000",
   "embedding": [0.01, 0.02, 0.03]
 }
 ```
@@ -84,6 +104,10 @@ TOP_K = 5
 - `start`：该 chunk 在原文中的开始位置。
 - `end`：该 chunk 在原文中的结束位置。
 - `text`：chunk 原文。
+- `chapter_title`：该 chunk 所属章节标题。章节标题只作为 metadata，不参与正文 embedding。
+- `chapter_index`：章节序号，从 1 开始；未识别章节时为 0。
+- `scene_index`：章节内场景序号，章节标题后、首个 `★★★` 前为 0。
+- `scene_id`：稳定场景标识，例如 `chapter-001-scene-002`。
 - `embedding`：向量模型返回的向量。
 
 ### 4.2 RetrievalResult
@@ -135,9 +159,9 @@ python -m src.main index --book data/novels/book.txt
 执行步骤：
 
 1. 读取 `book.txt`。
-2. 按 `chunk_size = 1000`、`overlap = 200` 切片。
-3. 为每个 chunk 调用 embedding API。
-4. 保存到 `data/index/chunks.jsonl`。
+2. 按章节、场景、自然段进行结构感知切片。
+3. 为每个 chunk 的正文 `text` 调用 embedding API。
+4. 保存 chunk 正文、chapter/scene metadata 和 embedding 到 `data/index/chunks.jsonl`。
 5. 输出 chunk 总数和索引保存位置。
 
 重复运行 `index` 时，默认覆盖旧的 `chunks.jsonl`，避免重复写入脏数据。
@@ -157,8 +181,10 @@ python -m src.main retrieve "主角第一次见到某人是什么时候？"
 1. 加载本地索引。
 2. 将用户问题向量化。
 3. 计算问题向量与所有 chunk 向量的 cosine similarity。
-4. 返回 top_k 结果。
-5. 打印 `chunk_id`、`score` 和片段文本。
+4. 取向量 top20 候选，并按 scene 聚合。
+5. 对高分 scene 中的命中 chunk 做前后相邻扩展。
+6. 返回按原文顺序排列的 top_k 上下文片段。
+7. 打印 `chunk_id`、`score` 和片段文本。
 
 ### 5.3 ask
 
@@ -174,7 +200,7 @@ python -m src.main ask "主角第一次见到某人是什么时候？"
 
 1. 加载本地索引。
 2. 将用户问题向量化。
-3. 召回 top_k 原文片段。
+3. 使用 scene-expanded 召回策略取 top_k 原文片段。
 4. 拼接 prompt。
 5. 调用 LLM。
 6. 输出回答和引用片段。
@@ -186,24 +212,42 @@ python -m src.main ask "主角第一次见到某人是什么时候？"
 切片伪代码：
 
 ```python
-def split_text(text: str, chunk_size: int = 1000, overlap: int = 200) -> list[str]:
+def split_text(text: str, target_size: int = 800, max_size: int = 1000, overlap_paragraphs: int = 3):
     chunks = []
-    step = chunk_size - overlap
-    start = 0
+    current = []
+    chapter = None
+    scene_index = 0
 
-    while start < len(text):
-        end = min(start + chunk_size, len(text))
-        chunks.append(text[start:end])
-        start += step
+    for unit in iter_non_empty_lines(text):
+        if is_chapter_title(unit):
+            flush_without_overlap(current)
+            chapter = unit.text
+            scene_index = 0
+            continue
+
+        if unit.text == "★★★":
+            flush_without_overlap(current)
+            scene_index += 1
+            continue
+
+        for paragraph in split_long_paragraph_by_sentence(unit, max_size):
+            if current and would_exceed_limit(current, paragraph, target_size, max_size):
+                flush_with_tail_overlap(current, overlap_paragraphs)
+            current.append(paragraph)
+
+    flush_without_overlap(current)
 
     return chunks
 ```
 
 约束：
 
-- `overlap` 必须小于 `chunk_size`。
+- `target_size` 必须大于 0，且不能大于 `max_size`。
+- `overlap_paragraphs` 必须大于等于 0。
 - 空文本不生成 chunk。
-- 最后一个 chunk 可以少于 1000 字。
+- 最后一个 chunk 可以少于目标长度。
+- 章节标题和 `★★★` 只用于 metadata 与边界，不进入 chunk 正文。
+- 向量化只使用 chunk 正文 `text`，不拼接 chapter/scene metadata。
 
 ### 6.2 向量化
 
@@ -230,7 +274,7 @@ MVP 阶段只需要封装两个能力：
 
 ### 6.4 召回算法
 
-MVP 使用 brute-force cosine similarity：
+底层相似度仍使用 brute-force cosine similarity：
 
 ```python
 score = dot(question_embedding, chunk_embedding) / (
@@ -243,8 +287,18 @@ score = dot(question_embedding, chunk_embedding) / (
 1. 问题向量化。
 2. 遍历所有 chunk。
 3. 计算 cosine similarity。
-4. 按分数倒序排序。
-5. 取前 `TOP_K = 5` 个结果。
+4. 按分数倒序排序，取 `VECTOR_TOP_N = 20` 个候选。
+5. 按候选的 `scene_id` 聚合，scene 分数使用该 scene 内最高 chunk 分数。
+6. 选出 top 3 个 scene。
+7. 对这些 scene 中进入 vector top20 的命中 chunk 做前后 1 个 chunk 扩展。
+8. 再补充同 scene 其他 chunk 作为上下文兜底。
+9. 最终按原文 `chunk_index` 顺序输出前 `TOP_K = 5` 个结果。
+
+设计取舍：
+
+- 优点：小说问答通常需要连续上下文，scene 扩展能补齐同一场景内的前因后果。
+- 风险：上下文可能更集中于少数 scene，降低跨场景问题的覆盖广度。
+- 当前策略更适合局部剧情、人物行动原因、单场景细节问答；跨章节/跨场景对比问题后续可增加 hybrid retrieval 或 rerank。
 
 ## 7. Prompt 设计
 
@@ -331,7 +385,7 @@ MVP 阶段只需要处理关键错误：
 - 本地索引不存在：提示先运行 `index`。
 - 本地索引为空：提示重新生成索引。
 - LLM API 调用失败：输出错误信息，并保留召回片段供排查。
-- `overlap >= chunk_size`：提示配置不合法。
+- `target_size > max_size` 或 chunk 参数小于合法范围：提示配置不合法。
 
 ## 11. 验收测试场景
 
@@ -341,7 +395,10 @@ MVP 阶段只需要处理关键错误：
 - 运行 `index`。
 - 期望生成 `data/index/chunks.jsonl`。
 - 期望 chunk 数量大于 0。
-- 期望相邻 chunk 存在 200 字重叠内容。
+- 期望 chunk 记录包含 chapter/scene metadata。
+- 期望章节标题和 `★★★` 不单独生成可召回 chunk。
+- 期望同 scene 内相邻 chunk 存在 3 个自然段 overlap。
+- 期望 overlap 不跨章节和 scene 边界。
 
 ### 11.2 查看召回
 
@@ -349,6 +406,7 @@ MVP 阶段只需要处理关键错误：
 - 期望返回 top_k 片段。
 - 期望至少一个片段与问题相关。
 - 期望输出包含 `chunk_id` 和 `score`。
+- 期望局部剧情问题能召回同 scene 或相邻 chunk 上下文。
 
 ### 11.3 完整问答
 
@@ -374,8 +432,10 @@ MVP 阶段只需要处理关键错误：
 MVP 后可以逐步增加：
 
 - 使用向量数据库，例如 FAISS、Chroma、Milvus。
-- 增加章节解析和章节名引用。
+- 增强章节解析和章节名引用。
 - 增加 chunk overlap、chunk size 的可配置能力。
+- 增加 hybrid retrieval，避免上下文过度集中于单一场景。
+- 增加同 scene 聚合分数策略，例如 top1/top2/top3 加权，而不是只取 scene 内最高分。
 - 增加 rerank 模型。
 - 增加前端页面。
 - 增加 API 服务层。
