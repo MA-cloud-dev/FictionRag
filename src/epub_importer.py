@@ -26,16 +26,39 @@ _SKIPPED_STEMS = {"chapter00"}
 _SCENE_SEPARATOR_PATTERN = re.compile(r"^★(?:\s*★){2,}$")
 _NATURAL_PART_PATTERN = re.compile(r"(\d+)")
 _CREDIT_PREFIXES = (
+    "作者",
+    "插画",
+    "插畫",
     "台版",
     "网译版",
     "转自",
     "图源",
     "扫图",
     "录入",
+    "錄入",
     "修图",
     "校对",
     "翻译",
+    "译者",
+    "譯者",
     "轻之国度",
+    "輕之國度",
+    "购书人",
+    "深夜读书会",
+    "读书群",
+    "仅供",
+    "僅供",
+    "下载",
+    "下載",
+    "请尊重",
+    "請尊重",
+)
+_IMPORT_CHAPTER_PATTERN = re.compile(
+    r"^第.+?(?:卷|章)\s+.+?(?:第[一二三四五六七八九十百千万零〇\d]+[话話]|[闲閒][话話]).*$"
+    r"|^第[一二三四五六七八九十百千万零〇\d]+[话話]\s*.*$"
+    r"|^(?:.+\s+)?(?:序章|终章|終章)$"
+    r"|^[闲閒][话話].*$"
+    r"|^外[传傳].*$"
 )
 
 
@@ -165,6 +188,7 @@ def extract_epub_text(epub_path: Path, include_prefix: str | None = None) -> str
                 paragraphs.append(paragraph)
                 previous = paragraph
 
+    paragraphs = _trim_front_matter(_drop_table_of_contents(paragraphs))
     return "\n\n".join(paragraphs).strip() + "\n" if paragraphs else ""
 
 
@@ -263,9 +287,51 @@ def _looks_like_arc_title(text: str) -> bool:
 
 
 def _looks_like_chapter_title(text: str) -> bool:
-    return bool(
-        re.match(r"^(?:第[一二三四五六七八九十百千万零〇\d]+话|序章|终章|闲话|外传)", text)
-    )
+    return bool(_IMPORT_CHAPTER_PATTERN.match(text))
+
+
+def _trim_front_matter(paragraphs: list[str]) -> list[str]:
+    """Drop leading blurbs, tables of contents, and credits before body text."""
+    for index, paragraph in enumerate(paragraphs):
+        if _looks_like_chapter_title(paragraph):
+            return paragraphs[index:]
+    return paragraphs
+
+
+def _drop_table_of_contents(paragraphs: list[str]) -> list[str]:
+    cleaned: list[str] = []
+    in_toc = False
+    toc_titles: set[str] = set()
+
+    for paragraph in paragraphs:
+        if _is_toc_heading(paragraph):
+            in_toc = True
+            toc_titles.clear()
+            continue
+
+        if in_toc:
+            normalized_title = _normalize_toc_title(paragraph)
+            if _looks_like_chapter_title(paragraph):
+                if normalized_title in toc_titles:
+                    in_toc = False
+                    cleaned.append(paragraph)
+                else:
+                    toc_titles.add(normalized_title)
+                continue
+            in_toc = False
+
+        cleaned.append(paragraph)
+
+    return cleaned
+
+
+def _is_toc_heading(text: str) -> bool:
+    normalized = unicodedata.normalize("NFKC", text).strip().upper()
+    return normalized in {"CONTENTS", "目录", "目錄"}
+
+
+def _normalize_toc_title(text: str) -> str:
+    return re.sub(r"\s+", "", text)
 
 
 def _should_skip_document(paragraphs: list[str]) -> bool:

@@ -97,3 +97,23 @@ def test_extract_epub_text_can_filter_by_prefix(tmp_path: Path):
 
     assert "第一话「后到章节」" in text
     assert "第二话「先到章节」" not in text
+
+
+def test_extract_epub_text_trims_intro_and_contents_before_first_chapter(tmp_path: Path):
+    epub_path = tmp_path / "book.epub"
+    write_minimal_epub(
+        epub_path,
+        chapter2_html=(
+            "<h1>简介</h1><p>宣传文案。</p><p>CONTENTS</p>"
+            "<p>第一话「正文标题」</p><p>第二话「目录项」</p>"
+            "<h2>第一话 「正文标题」</h2><p>正文。</p>"
+        ),
+    )
+
+    text = extract_epub_text(epub_path)
+
+    assert text.startswith("第一话 「正文标题」")
+    assert "简介" not in text
+    assert "宣传文案" not in text
+    assert "CONTENTS" not in text
+    assert "第二话「目录项」" not in text

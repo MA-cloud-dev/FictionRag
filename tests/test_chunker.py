@@ -50,6 +50,28 @@ def test_build_chunks_recognizes_prologue_and_epilogue_titles():
     assert chunks[1].text == "终章正文。"
 
 
+def test_build_chunks_recognizes_traditional_chapter_titles():
+    text = "\n\n".join(
+        [
+            "第二十五卷 青年期 決戰篇 下 第一話「察覺異變之人」",
+            "正文一。",
+            "閒話「鎧甲」",
+            "正文二。",
+            "外傳「測試」",
+            "正文三。",
+        ]
+    )
+
+    chunks = build_chunks(text, book_name="book", chunk_size=20, max_chunk_size=40, overlap=1)
+
+    assert [chunk.chapter_title for chunk in chunks] == [
+        "第二十五卷 青年期 決戰篇 下 第一話「察覺異變之人」",
+        "閒話「鎧甲」",
+        "外傳「測試」",
+    ]
+    assert [chunk.text for chunk in chunks] == ["正文一。", "正文二。", "正文三。"]
+
+
 def test_split_text_keeps_scene_boundaries():
     text = "\n\n".join(
         [
