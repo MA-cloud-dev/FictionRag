@@ -42,7 +42,7 @@ def write_minimal_epub(path: Path, chapter2_html: str | None = None) -> None:
         archive.writestr("OEBPS/Text/message.xhtml", "<h1>制作信息</h1><p>请勿商业使用</p>")
         archive.writestr(
             "OEBPS/Text/chapter1.xhtml",
-            "<h1>第一话「后到章节」</h1><p>第一段。</p><p>★ ★ ★</p><p>第二段。</p>",
+            "<h1>第一话「后到章节」</h1><p>图源：测试</p><p>第一段。</p><p>★ ★ ★</p><p>第二段。</p>",
         )
         archive.writestr(
             "OEBPS/Text/chapter2.xhtml",
@@ -72,6 +72,7 @@ def test_extract_epub_text_uses_spine_order_and_filters_front_matter(tmp_path: P
     assert "目录项" not in text
     assert "简介" not in text
     assert "制作信息" not in text
+    assert "图源" not in text
     assert text.index("第二话") < text.index("第一话")
     assert "★★★" in text
 
@@ -86,3 +87,13 @@ def test_import_epub_to_text_writes_clean_text(tmp_path: Path):
     assert output_path.exists()
     assert paragraph_count == 6
     assert character_count == len(output_path.read_text(encoding="utf-8"))
+
+
+def test_extract_epub_text_can_filter_by_prefix(tmp_path: Path):
+    epub_path = tmp_path / "book.epub"
+    write_minimal_epub(epub_path)
+
+    text = extract_epub_text(epub_path, include_prefix="第一话")
+
+    assert "第一话「后到章节」" in text
+    assert "第二话「先到章节」" not in text

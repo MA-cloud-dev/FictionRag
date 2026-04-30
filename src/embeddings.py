@@ -25,13 +25,13 @@ class EmbeddingClient:
         if not texts:
             return []
         embeddings: list[list[float]] = []
-        batch_size = 10 if self.config.model == "qwen3-vl-embedding" else 1
+        batch_size = self._batch_size()
         for start in range(0, len(texts), batch_size):
             embeddings.extend(self._embed_batch(texts[start : start + batch_size]))
         return embeddings
 
     def _embed_batch(self, texts: list[str]) -> list[list[float]]:
-        if self.config.model == "qwen3-vl-embedding":
+        if self._uses_dashscope_multimodal():
             return self._embed_dashscope_multimodal(texts)
 
         payload = {
@@ -123,3 +123,11 @@ class EmbeddingClient:
         if not isinstance(body, dict):
             raise APIError("Embedding API response JSON must be an object")
         return body
+
+    def _uses_dashscope_multimodal(self) -> bool:
+        return self.config.model.endswith("-vl-embedding")
+
+    def _batch_size(self) -> int:
+        if self.config.model in {"qwen3-vl-embedding", "text-embedding-v4"}:
+            return 10
+        return 1

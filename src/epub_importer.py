@@ -25,6 +25,18 @@ _SKIPPED_NAME_PARTS = {
 _SKIPPED_STEMS = {"chapter00"}
 _SCENE_SEPARATOR_PATTERN = re.compile(r"^★(?:\s*★){2,}$")
 _NATURAL_PART_PATTERN = re.compile(r"(\d+)")
+_CREDIT_PREFIXES = (
+    "台版",
+    "网译版",
+    "转自",
+    "图源",
+    "扫图",
+    "录入",
+    "修图",
+    "校对",
+    "翻译",
+    "轻之国度",
+)
 
 
 class EpubImportError(RuntimeError):
@@ -109,9 +121,13 @@ class _BlockTextParser(HTMLParser):
         self._current.clear()
 
 
-def import_epub_to_text(epub_path: Path, output_path: Path) -> tuple[int, int]:
+def import_epub_to_text(
+    epub_path: Path,
+    output_path: Path,
+    include_prefix: str | None = None,
+) -> tuple[int, int]:
     """Extract clean plain text from ``epub_path`` and write it to ``output_path``."""
-    text = extract_epub_text(epub_path)
+    text = extract_epub_text(epub_path, include_prefix=include_prefix)
     if not text:
         raise EpubImportError(f"No importable text found in EPUB: {epub_path}")
 
@@ -121,7 +137,7 @@ def import_epub_to_text(epub_path: Path, output_path: Path) -> tuple[int, int]:
     return paragraph_count, len(text)
 
 
-def extract_epub_text(epub_path: Path) -> str:
+def extract_epub_text(epub_path: Path, include_prefix: str | None = None) -> str:
     if not epub_path.exists():
         raise FileNotFoundError(f"EPUB file does not exist: {epub_path}")
     if not epub_path.is_file():
@@ -137,6 +153,11 @@ def extract_epub_text(epub_path: Path) -> str:
             raw = archive.read(html_path)
             document_paragraphs = _extract_html_paragraphs(raw)
             if _should_skip_document(document_paragraphs):
+                continue
+            if include_prefix and not _document_matches_prefix(
+                document_paragraphs,
+                include_prefix,
+            ):
                 continue
             for paragraph in document_paragraphs:
                 if paragraph == previous:
@@ -254,6 +275,13 @@ def _should_skip_document(paragraphs: list[str]) -> bool:
     return first in {"CONTENTS", "目录", "目錄"}
 
 
+def _document_matches_prefix(paragraphs: list[str], include_prefix: str) -> bool:
+    prefix = include_prefix.strip()
+    if not prefix:
+        return True
+    return any(paragraph.startswith(prefix) for paragraph in paragraphs[:3])
+
+
 def _normalize_inline_text(text: str) -> str:
     text = text.replace("\xa0", " ").replace("\u3000", " ")
     return re.sub(r"\s+", " ", text).strip()
@@ -262,9 +290,17 @@ def _normalize_inline_text(text: str) -> str:
 def _normalize_paragraph(text: str) -> str:
     text = text.replace("\xa0", " ").replace("\u3000", " ")
     text = re.sub(r"\s+", " ", text).strip()
+    if _is_credit_line(text):
+        return ""
     if _SCENE_SEPARATOR_PATTERN.match(text):
         return "★★★"
     return text
+
+
+def _is_credit_line(text: str) -> bool:
+    if not text:
+        return False
+    return text.startswith(_CREDIT_PREFIXES)
 
 
 def _natural_sort_key(value: str) -> list[int | str]:

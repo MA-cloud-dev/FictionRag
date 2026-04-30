@@ -1,5 +1,5 @@
 from src.chunker import Chunk
-from src.retriever import cosine_similarity, retrieve
+from src.retriever import build_bm25_index, cosine_similarity, retrieve
 
 
 def make_chunk(
@@ -71,6 +71,25 @@ def test_retrieve_uses_bm25_to_recall_exact_keyword_match():
         top_k=2,
         vector_top_n=1,
         query_text="米里斯银币三枚",
+    )
+
+    assert "keyword" in [result.chunk_id for result in results]
+
+
+def test_retrieve_accepts_reusable_bm25_index():
+    chunks = [
+        make_chunk("vector", [1.0, 0.0], text="普通的港口旅行段落"),
+        make_chunk("keyword", [0.0, 1.0], text="兑换之后，成了米里斯银币三枚。"),
+    ]
+    bm25_index = build_bm25_index(chunks)
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=2,
+        vector_top_n=1,
+        query_text="米里斯银币三枚",
+        bm25_index=bm25_index,
     )
 
     assert "keyword" in [result.chunk_id for result in results]
@@ -253,6 +272,7 @@ def test_scene_expansion_does_not_merge_same_scene_id_across_books():
         top_k=3,
         vector_top_n=1,
         top_scene_count=1,
+        book_route_count=0,
     )
 
     assert [result.chunk_id for result in results] == ["book-a-seed", "book-a-after"]
@@ -298,6 +318,72 @@ def test_neighbor_expansion_does_not_cross_books_with_same_chunk_index():
         top_scene_count=1,
         neighbor_before=1,
         neighbor_after=1,
+        book_route_count=0,
     )
 
     assert [result.chunk_id for result in results] == ["book-a-before", "book-a-seed"]
+
+
+def test_book_routing_caps_single_book_dominance():
+    chunks = [
+        make_chunk(
+            f"book-a-{index}",
+            [1.0 - index * 0.01, index * 0.01],
+            chunk_index=index,
+            book_name="book-a",
+        )
+        for index in range(1, 7)
+    ] + [
+        make_chunk("book-b-hit", [0.8, 0.2], chunk_index=1, book_name="book-b"),
+        make_chunk("book-c-hit", [0.7, 0.3], chunk_index=1, book_name="book-c"),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=5,
+        book_route_count=3,
+        book_result_cap=3,
+    )
+
+    assert sum(result.chunk.book_name == "book-a" for result in results) == 3
+    assert "book-b-hit" in [result.chunk_id for result in results]
+
+
+def test_book_routing_still_expands_scene_within_selected_book():
+    chunks = [
+        make_chunk(
+            "book-a-seed",
+            [1.0, 0.0],
+            chunk_index=2,
+            scene_id="scene-a",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-a-after",
+            [0.8, 0.2],
+            chunk_index=3,
+            scene_id="scene-a",
+            book_name="book-a",
+        ),
+        make_chunk(
+            "book-b-seed",
+            [0.9, 0.1],
+            chunk_index=1,
+            scene_id="scene-b",
+            book_name="book-b",
+        ),
+    ]
+
+    results = retrieve(
+        [1.0, 0.0],
+        chunks,
+        top_k=3,
+        vector_top_n=1,
+        top_scene_count=1,
+        neighbor_before=0,
+        neighbor_after=1,
+        book_route_count=1,
+    )
+
+    assert [result.chunk_id for result in results] == ["book-a-seed", "book-a-after"]

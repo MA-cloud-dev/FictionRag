@@ -16,6 +16,8 @@ DEFAULT_TOP_SCENE_COUNT = 3
 DEFAULT_NEIGHBOR_RADIUS = 1
 DEFAULT_NEIGHBOR_BEFORE = 2
 DEFAULT_NEIGHBOR_AFTER = 1
+DEFAULT_BOOK_ROUTE_COUNT = 3
+DEFAULT_BOOK_RESULT_CAP = 3
 BM25_K1 = 1.5
 BM25_B = 0.75
 VECTOR_SCORE_WEIGHT = 0.8
@@ -64,6 +66,16 @@ class _RescueEvidence:
     score: float
 
 
+@dataclass(frozen=True)
+class BM25Index:
+    chunks: list[Chunk]
+    document_terms: list[list[str]]
+    document_term_counts: list[Counter[str]]
+    document_lengths: list[int]
+    document_frequencies: Counter[str]
+    average_length: float
+
+
 def cosine_similarity(left: list[float], right: list[float]) -> float:
     if len(left) != len(right):
         raise ValueError("Vectors must have the same dimension")
@@ -89,6 +101,9 @@ def retrieve(
     bm25_top_n: int = DEFAULT_BM25_TOP_N,
     neighbor_before: int | None = None,
     neighbor_after: int | None = None,
+    bm25_index: BM25Index | None = None,
+    book_route_count: int = DEFAULT_BOOK_ROUTE_COUNT,
+    book_result_cap: int | None = None,
 ) -> list[RetrievalResult]:
     if top_k <= 0:
         return []
@@ -108,12 +123,16 @@ def retrieve(
         raise ValueError("neighbor_before must be greater than or equal to 0")
     if neighbor_after < 0:
         raise ValueError("neighbor_after must be greater than or equal to 0")
+    if book_route_count < 0:
+        raise ValueError("book_route_count must be greater than or equal to 0")
+    if book_result_cap is not None and book_result_cap <= 0:
+        raise ValueError("book_result_cap must be greater than 0")
 
     results = _build_vector_results(question_embedding, chunks)
     vector_results = results
     bm25_scores: dict[str, float] = {}
     if query_text:
-        bm25_scores = _bm25_scores(query_text, chunks)
+        bm25_scores = _bm25_scores(query_text, chunks, bm25_index=bm25_index)
         results = _fuse_vector_and_bm25_results(
             vector_results=results,
             chunks=[result.chunk for result in results],
@@ -124,6 +143,23 @@ def retrieve(
         )
 
     results.sort(key=lambda item: item.score, reverse=True)
+    if book_route_count > 0 and _has_multiple_books(chunks):
+        return _retrieve_with_book_routing(
+            results=results,
+            vector_results=vector_results,
+            chunks=chunks,
+            top_k=top_k,
+            vector_top_n=vector_top_n,
+            top_scene_count=top_scene_count,
+            neighbor_before=neighbor_before,
+            neighbor_after=neighbor_after,
+            query_text=query_text,
+            bm25_scores=bm25_scores,
+            bm25_top_n=bm25_top_n,
+            book_route_count=book_route_count,
+            book_result_cap=book_result_cap,
+        )
+
     if not _has_scene_metadata(results):
         return results[:top_k]
 
@@ -181,9 +217,10 @@ def _fuse_vector_and_bm25_results(
     vector_top_n: int,
     bm25_top_n: int,
     bm25_scores: dict[str, float] | None = None,
+    bm25_index: BM25Index | None = None,
 ) -> list[RetrievalResult]:
     if bm25_scores is None:
-        bm25_scores = _bm25_scores(query_text, chunks)
+        bm25_scores = _bm25_scores(query_text, chunks, bm25_index=bm25_index)
     vector_scores = {
         result.chunk_id: result.score
         for result in vector_results[:vector_top_n]
@@ -435,40 +472,66 @@ def _normalize_score(score: float, max_score: float) -> float:
     return score / max_score
 
 
-def _bm25_scores(query_text: str, chunks: list[Chunk]) -> dict[str, float]:
+def build_bm25_index(chunks: list[Chunk]) -> BM25Index:
+    document_terms = [_tokenize_for_bm25(chunk.text) for chunk in chunks]
+    document_term_counts = [Counter(terms) for terms in document_terms]
+    document_lengths = [len(terms) for terms in document_terms]
+    average_length = (
+        sum(document_lengths) / len(document_lengths)
+        if document_lengths
+        else 0.0
+    )
+    document_frequencies: Counter[str] = Counter()
+    for terms in document_terms:
+        document_frequencies.update(set(terms))
+    return BM25Index(
+        chunks=chunks,
+        document_terms=document_terms,
+        document_term_counts=document_term_counts,
+        document_lengths=document_lengths,
+        document_frequencies=document_frequencies,
+        average_length=average_length,
+    )
+
+
+def _bm25_scores(
+    query_text: str,
+    chunks: list[Chunk],
+    bm25_index: BM25Index | None = None,
+) -> dict[str, float]:
     query_terms = Counter(_tokenize_for_bm25(query_text))
     if not query_terms or not chunks:
         return {}
 
-    document_terms = [_tokenize_for_bm25(chunk.text) for chunk in chunks]
-    document_lengths = [len(terms) for terms in document_terms]
-    average_length = sum(document_lengths) / len(document_lengths)
-    if average_length == 0.0:
+    if bm25_index is None:
+        bm25_index = build_bm25_index(chunks)
+    if bm25_index.chunks is not chunks:
+        bm25_index = build_bm25_index(chunks)
+    if bm25_index.average_length == 0.0:
         return {}
-
-    document_frequencies: Counter[str] = Counter()
-    for terms in document_terms:
-        document_frequencies.update(set(terms))
 
     total_documents = len(chunks)
     scores: dict[str, float] = {}
-    for chunk, terms, document_length in zip(chunks, document_terms, document_lengths):
+    for chunk, term_counts, document_length in zip(
+        chunks,
+        bm25_index.document_term_counts,
+        bm25_index.document_lengths,
+    ):
         if document_length == 0:
             continue
-        term_counts = Counter(terms)
         score = 0.0
         for term, query_count in query_terms.items():
             term_frequency = term_counts.get(term, 0)
             if term_frequency == 0:
                 continue
-            document_frequency = document_frequencies[term]
+            document_frequency = bm25_index.document_frequencies[term]
             idf = math.log(
                 1.0
                 + (total_documents - document_frequency + 0.5)
                 / (document_frequency + 0.5)
             )
             denominator = term_frequency + BM25_K1 * (
-                1.0 - BM25_B + BM25_B * document_length / average_length
+                1.0 - BM25_B + BM25_B * document_length / bm25_index.average_length
             )
             score += (
                 query_count
@@ -538,6 +601,172 @@ def _is_cjk(char: str) -> bool:
 
 def _has_scene_metadata(results: list[RetrievalResult]) -> bool:
     return any(result.chunk.scene_id != "scene-000" for result in results)
+
+
+def _has_multiple_books(chunks: list[Chunk]) -> bool:
+    book_names = {chunk.book_name for chunk in chunks}
+    return len(book_names) > 1
+
+
+def _retrieve_with_book_routing(
+    results: list[RetrievalResult],
+    vector_results: list[RetrievalResult],
+    chunks: list[Chunk],
+    top_k: int,
+    vector_top_n: int,
+    top_scene_count: int,
+    neighbor_before: int,
+    neighbor_after: int,
+    query_text: str | None,
+    bm25_scores: dict[str, float],
+    bm25_top_n: int,
+    book_route_count: int,
+    book_result_cap: int | None,
+) -> list[RetrievalResult]:
+    selected_books = _select_route_books(
+        fused_results=results,
+        bm25_scores=bm25_scores,
+        route_count=book_route_count,
+        candidate_count=max(vector_top_n, bm25_top_n, book_route_count * 8),
+    )
+    if not selected_books:
+        return results[:top_k]
+
+    selected_book_set = set(selected_books)
+    chunks_by_book: dict[str, list[Chunk]] = defaultdict(list)
+    results_by_book: dict[str, list[RetrievalResult]] = defaultdict(list)
+    vector_results_by_book: dict[str, list[RetrievalResult]] = defaultdict(list)
+    chunk_ids_by_book: dict[str, set[str]] = defaultdict(set)
+    for chunk in chunks:
+        if chunk.book_name in selected_book_set:
+            chunks_by_book[chunk.book_name].append(chunk)
+            chunk_ids_by_book[chunk.book_name].add(chunk.id)
+    for result in results:
+        if result.chunk.book_name in selected_book_set:
+            results_by_book[result.chunk.book_name].append(result)
+    for result in vector_results:
+        if result.chunk.book_name in selected_book_set:
+            vector_results_by_book[result.chunk.book_name].append(result)
+
+    candidates: list[RetrievalResult] = []
+    seen_ids: set[str] = set()
+    for book_name in selected_books:
+        book_results = results_by_book.get(book_name, [])
+        book_chunks = chunks_by_book.get(book_name, [])
+        if not book_results or not book_chunks:
+            continue
+
+        if _has_scene_metadata(book_results):
+            expanded = _expand_by_scene(
+                results=book_results,
+                chunks=book_chunks,
+                top_k=top_k,
+                vector_top_n=vector_top_n,
+                top_scene_count=top_scene_count,
+                neighbor_before=neighbor_before,
+                neighbor_after=neighbor_after,
+            )
+            if query_text and bm25_scores:
+                book_bm25_scores = {
+                    chunk_id: score
+                    for chunk_id, score in bm25_scores.items()
+                    if chunk_id in chunk_ids_by_book[book_name]
+                }
+                expanded = _apply_rescue_slot(
+                    baseline_results=expanded,
+                    fused_results=book_results,
+                    vector_results=vector_results_by_book.get(book_name, []),
+                    chunks=book_chunks,
+                    query_text=query_text,
+                    bm25_scores=book_bm25_scores,
+                    top_k=top_k,
+                    vector_top_n=vector_top_n,
+                    bm25_top_n=bm25_top_n,
+                    neighbor_before=neighbor_before,
+                    neighbor_after=neighbor_after,
+                )
+        else:
+            expanded = book_results[:top_k]
+
+        for result in expanded:
+            if result.chunk_id in seen_ids:
+                continue
+            seen_ids.add(result.chunk_id)
+            candidates.append(result)
+
+    if not candidates:
+        return results[:top_k]
+    return _merge_book_routed_results(
+        candidates=candidates,
+        top_k=top_k,
+        book_result_cap=book_result_cap or DEFAULT_BOOK_RESULT_CAP,
+    )
+
+
+def _select_route_books(
+    fused_results: list[RetrievalResult],
+    bm25_scores: dict[str, float],
+    route_count: int,
+    candidate_count: int,
+) -> list[str]:
+    book_scores: dict[str, float] = {}
+    book_best_rank: dict[str, int] = {}
+    for rank, result in enumerate(fused_results[:candidate_count], start=1):
+        book_name = result.chunk.book_name
+        if book_name not in book_scores or result.score > book_scores[book_name]:
+            book_scores[book_name] = result.score
+            book_best_rank[book_name] = rank
+
+    chunk_by_id = {result.chunk_id: result.chunk for result in fused_results}
+    max_bm25_score = max(bm25_scores.values(), default=0.0)
+    for rank, (chunk_id, score) in enumerate(
+        sorted(bm25_scores.items(), key=lambda item: item[1], reverse=True)[:candidate_count],
+        start=1,
+    ):
+        chunk = chunk_by_id.get(chunk_id)
+        if chunk is None:
+            continue
+        book_name = chunk.book_name
+        normalized_score = _normalize_score(score, max_bm25_score)
+        if book_name not in book_scores or normalized_score > book_scores[book_name]:
+            book_scores[book_name] = normalized_score
+            book_best_rank[book_name] = rank
+
+    return sorted(
+        book_scores,
+        key=lambda book_name: (-book_scores[book_name], book_best_rank[book_name]),
+    )[:route_count]
+
+
+def _merge_book_routed_results(
+    candidates: list[RetrievalResult],
+    top_k: int,
+    book_result_cap: int,
+) -> list[RetrievalResult]:
+    merged: list[RetrievalResult] = []
+    seen_ids: set[str] = set()
+    count_by_book: Counter[str] = Counter()
+    ranked_candidates = sorted(candidates, key=lambda result: result.score, reverse=True)
+
+    for result in ranked_candidates:
+        if result.chunk_id in seen_ids:
+            continue
+        if count_by_book[result.chunk.book_name] >= book_result_cap:
+            continue
+        merged.append(result)
+        seen_ids.add(result.chunk_id)
+        count_by_book[result.chunk.book_name] += 1
+        if len(merged) == top_k:
+            return merged
+
+    for result in ranked_candidates:
+        if result.chunk_id in seen_ids:
+            continue
+        merged.append(result)
+        seen_ids.add(result.chunk_id)
+        if len(merged) == top_k:
+            break
+    return merged
 
 
 def _expand_by_scene(

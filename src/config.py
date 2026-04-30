@@ -30,6 +30,14 @@ class EmbeddingConfig:
 
 
 @dataclass(frozen=True)
+class RerankerConfig:
+    api_key: str
+    base_url: str
+    model: str
+    timeout_seconds: int = 60
+
+
+@dataclass(frozen=True)
 class LLMConfig:
     api_key: str
     base_url: str
@@ -72,6 +80,28 @@ def load_embedding_config() -> EmbeddingConfig:
         base_url=_normalize_base_url(_required_env("EMBEDDING_BASE_URL")),
         model=_required_env("EMBEDDING_MODEL"),
     )
+
+
+def load_reranker_config() -> RerankerConfig:
+    load_dotenv()
+    api_key = os.getenv("RERANKER_API_KEY") or _required_env("EMBEDDING_API_KEY")
+    base_url = os.getenv("RERANKER_BASE_URL") or _reranker_base_url_from_embedding(
+        _required_env("EMBEDDING_BASE_URL")
+    )
+    model = os.getenv("RERANKER_MODEL") or "qwen3-rerank"
+    return RerankerConfig(
+        api_key=api_key,
+        base_url=_normalize_base_url(base_url),
+        model=model,
+    )
+
+
+def _reranker_base_url_from_embedding(embedding_base_url: str) -> str:
+    normalized = _normalize_base_url(embedding_base_url)
+    compatible_mode_suffix = "/compatible-mode/v1"
+    if normalized.endswith(compatible_mode_suffix):
+        return normalized[: -len(compatible_mode_suffix)] + "/compatible-api/v1"
+    return normalized
 
 
 def load_llm_config() -> LLMConfig:

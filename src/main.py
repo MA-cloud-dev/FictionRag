@@ -20,10 +20,14 @@ if __package__ in {None, ""}:
         ConfigError,
         load_embedding_config,
         load_llm_config,
+        load_reranker_config,
     )
     from src.embeddings import APIError, EmbeddingClient
     from src.evaluator import (
         DEFAULT_EVAL_DIR,
+        DEFAULT_RERANK_BM25_TOP_N,
+        DEFAULT_RERANK_CANDIDATE_TOP_N,
+        DEFAULT_RERANK_VECTOR_TOP_N,
         DEFAULT_SAMPLE_SIZE,
         DEFAULT_SEED,
         run_evaluation,
@@ -32,7 +36,13 @@ if __package__ in {None, ""}:
     from src.index_store import IndexStoreError, load_chunks, save_chunks
     from src.llm import LLMClient
     from src.prompts import build_user_prompt
-    from src.retriever import RetrievalResult, retrieve
+    from src.retriever import (
+        DEFAULT_BOOK_RESULT_CAP,
+        DEFAULT_BOOK_ROUTE_COUNT,
+        RetrievalResult,
+        retrieve,
+    )
+    from src.reranker import RerankerClient
 else:
     from .chunker import build_chunks
     from .config import (
@@ -45,10 +55,14 @@ else:
         ConfigError,
         load_embedding_config,
         load_llm_config,
+        load_reranker_config,
     )
     from .embeddings import APIError, EmbeddingClient
     from .evaluator import (
         DEFAULT_EVAL_DIR,
+        DEFAULT_RERANK_BM25_TOP_N,
+        DEFAULT_RERANK_CANDIDATE_TOP_N,
+        DEFAULT_RERANK_VECTOR_TOP_N,
         DEFAULT_SAMPLE_SIZE,
         DEFAULT_SEED,
         run_evaluation,
@@ -57,7 +71,13 @@ else:
     from .index_store import IndexStoreError, load_chunks, save_chunks
     from .llm import LLMClient
     from .prompts import build_user_prompt
-    from .retriever import RetrievalResult, retrieve
+    from .retriever import (
+        DEFAULT_BOOK_RESULT_CAP,
+        DEFAULT_BOOK_ROUTE_COUNT,
+        RetrievalResult,
+        retrieve,
+    )
+    from .reranker import RerankerClient
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -132,6 +152,41 @@ def build_parser() -> argparse.ArgumentParser:
     eval_parser.add_argument("--seed", type=int, default=DEFAULT_SEED)
     eval_parser.add_argument("--top-k", type=int, default=DEFAULT_TOP_K)
     eval_parser.add_argument(
+        "--book-route-count",
+        type=int,
+        default=DEFAULT_BOOK_ROUTE_COUNT,
+        help="Route retrieval through the top N candidate books before scene expansion.",
+    )
+    eval_parser.add_argument(
+        "--book-result-cap",
+        type=int,
+        default=DEFAULT_BOOK_RESULT_CAP,
+        help="Maximum number of final Top K chunks allowed from one routed book.",
+    )
+    eval_parser.add_argument(
+        "--rerank",
+        action="store_true",
+        help="Rerank retrieval candidates with the configured reranker model.",
+    )
+    eval_parser.add_argument(
+        "--rerank-candidate-top-n",
+        type=int,
+        default=DEFAULT_RERANK_CANDIDATE_TOP_N,
+        help="Number of pre-rerank candidates to score.",
+    )
+    eval_parser.add_argument(
+        "--rerank-vector-top-n",
+        type=int,
+        default=DEFAULT_RERANK_VECTOR_TOP_N,
+        help="Dense retrieval top-N used when building rerank candidates.",
+    )
+    eval_parser.add_argument(
+        "--rerank-bm25-top-n",
+        type=int,
+        default=DEFAULT_RERANK_BM25_TOP_N,
+        help="BM25 retrieval top-N used when building rerank candidates.",
+    )
+    eval_parser.add_argument(
         "--force-generate",
         action="store_true",
         help="Regenerate dataset.jsonl even if it already exists",
@@ -140,6 +195,10 @@ def build_parser() -> argparse.ArgumentParser:
     import_parser = subparsers.add_parser("import-epub", help="Clean an EPUB into plain text")
     import_parser.add_argument("--epub", required=True, help="Path to the source EPUB file")
     import_parser.add_argument("--output", required=True, help="Output .txt path")
+    import_parser.add_argument(
+        "--include-prefix",
+        help="Only import documents whose first paragraphs start with this prefix.",
+    )
 
     return parser
 
@@ -219,6 +278,7 @@ def run_ask(args: argparse.Namespace) -> int:
 def run_eval(args: argparse.Namespace) -> int:
     llm_client = LLMClient(load_llm_config())
     embedding_client = EmbeddingClient(load_embedding_config())
+    reranker_client = RerankerClient(load_reranker_config()) if args.rerank else None
     samples_per_book = _parse_sample_per_book(args.sample_per_book)
     summary = run_evaluation(
         index_path=Path(args.index_path),
@@ -230,6 +290,13 @@ def run_eval(args: argparse.Namespace) -> int:
         llm_client=llm_client,
         embedding_client=embedding_client,
         samples_per_book=samples_per_book,
+        book_route_count=args.book_route_count,
+        book_result_cap=args.book_result_cap,
+        rerank_enabled=args.rerank,
+        reranker_client=reranker_client,
+        rerank_candidate_top_n=args.rerank_candidate_top_n,
+        rerank_vector_top_n=args.rerank_vector_top_n,
+        rerank_bm25_top_n=args.rerank_bm25_top_n,
     )
     metrics = summary["metrics"]
     recall = metrics["recall"]
@@ -241,6 +308,13 @@ def run_eval(args: argparse.Namespace) -> int:
     print(f"Recall@3: {recall['recall_at_3']:.2%}")
     print(f"Recall@5: {recall['recall_at_5']:.2%}")
     print(f"MRR: {metrics['mrr']:.4f}")
+    print(f"Book route count: {args.book_route_count}")
+    print(f"Book result cap: {args.book_result_cap}")
+    print(f"Rerank enabled: {args.rerank}")
+    if args.rerank:
+        print(f"Rerank candidate top_n: {args.rerank_candidate_top_n}")
+        print(f"Rerank vector top_n: {args.rerank_vector_top_n}")
+        print(f"Rerank BM25 top_n: {args.rerank_bm25_top_n}")
     print(f"Summary: {summary['summary_path']}")
     return 0
 
@@ -249,6 +323,7 @@ def run_import_epub(args: argparse.Namespace) -> int:
     paragraph_count, character_count = import_epub_to_text(
         epub_path=Path(args.epub),
         output_path=Path(args.output),
+        include_prefix=args.include_prefix,
     )
     print(f"Imported EPUB to {args.output}")
     print(f"Paragraphs: {paragraph_count}")
