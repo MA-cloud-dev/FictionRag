@@ -76,6 +76,9 @@ def _answer_to_dict(result: RagAnswer) -> dict[str, object]:
     return {
         "question": result.question,
         "answer": result.answer,
+        "used_rewrite": result.used_rewrite,
+        "rewritten_queries": result.rewritten_queries,
+        "answerability": result.answerability,
         "contexts": [
             {
                 "rank": rank,

@@ -16,6 +16,7 @@ const modalText = document.querySelector("#modal-text");
 const modalClose = document.querySelector("#modal-close");
 
 const TOP_K = 5;
+const REFERENCE_PREVIEW_LENGTH = 80;
 
 initializeStaticReferenceCards();
 loadBookStats();
@@ -84,7 +85,7 @@ function initializeStaticReferenceCards() {
     const bookName = card.querySelector(".reference-meta span")?.textContent || "原文依据";
     const scoreText = card.querySelector(".reference-meta strong")?.textContent || "";
     const chunkId = card.querySelector(".chunk-id")?.textContent.replace("chunk_id:", "").trim() || "-";
-    const text = card.querySelector("p:last-child")?.textContent || "";
+    const text = card.querySelector(".reference-body p:not(.chunk-id)")?.textContent || "";
     const score = Number(scoreText.replace("score", "").trim());
     const context = {
       rank: index + 1,
@@ -113,7 +114,7 @@ async function loadBookStats() {
 
 function renderBooks(stats) {
   indexPathValue.textContent = stats.index_path || "data/index/chunks.jsonl";
-  booksHeading.textContent = `当前书库 · ${stats.total_books || 0} 本 · ${stats.total_chunks || 0} chunks`;
+  booksHeading.textContent = `${stats.total_books || 0} 本书卷 · ${stats.total_chunks || 0} chunks`;
   booksList.replaceChildren();
 
   (stats.books || []).forEach((book) => {
@@ -135,25 +136,45 @@ function appendMessage(role, text) {
   const article = document.createElement("article");
   article.className = `message message-${role}`;
 
-  const avatar = document.createElement("div");
-  avatar.className = "avatar";
-  avatar.setAttribute("aria-hidden", "true");
-  avatar.textContent = role === "user" ? "你" : "AI";
-
   const bubble = document.createElement("div");
   bubble.className = "bubble";
 
-  const paragraph = document.createElement("p");
-  paragraph.textContent = text;
-  bubble.append(paragraph);
-  article.append(avatar, bubble);
+  splitParagraphs(text).forEach((paragraphText) => {
+    const paragraph = document.createElement("p");
+    paragraph.textContent = paragraphText;
+    bubble.append(paragraph);
+  });
+
+  if (role === "user") {
+    const portrait = document.createElement("div");
+    portrait.className = "portrait user-portrait";
+    portrait.setAttribute("aria-hidden", "true");
+    portrait.textContent = "你";
+
+    const time = document.createElement("time");
+    time.textContent = `${formatTime()} ✓`;
+    article.append(bubble, portrait, time);
+  } else {
+    const seal = document.createElement("div");
+    seal.className = "assistant-seal";
+    seal.setAttribute("aria-hidden", "true");
+    seal.textContent = "AI";
+
+    const tools = document.createElement("div");
+    tools.className = "message-tools";
+    tools.setAttribute("aria-hidden", "true");
+    tools.innerHTML = `<span>♡ 复制</span><span>↻ 重新生成</span><time>${formatTime()}</time>`;
+    bubble.append(tools);
+    article.append(seal, bubble);
+  }
+
   conversation.append(article);
   article.scrollIntoView({ behavior: "smooth", block: "end" });
 }
 
 function renderReferences(contexts) {
   referenceList.replaceChildren();
-  referencesHeading.textContent = `Top ${TOP_K} 原文依据`;
+  referencesHeading.textContent = "召回文本";
 
   if (!contexts.length) {
     const empty = document.createElement("article");
@@ -166,6 +187,14 @@ function renderReferences(contexts) {
   contexts.forEach((context) => {
     const card = document.createElement("article");
     card.className = "reference-card";
+
+    const rank = document.createElement("div");
+    rank.className = "reference-rank";
+    rank.textContent = String(context.rank || referenceList.children.length + 1);
+
+    const body = document.createElement("div");
+    body.className = "reference-body";
+
     const meta = document.createElement("div");
     meta.className = "reference-meta";
 
@@ -180,10 +209,15 @@ function renderReferences(contexts) {
     chunkId.textContent = `chunk_id: ${context.chunk_id || "-"}`;
 
     const text = document.createElement("p");
-    text.textContent = context.text || "";
+    text.textContent = buildPreview(context.text);
+
+    const detail = document.createElement("span");
+    detail.className = "detail-link";
+    detail.textContent = "查看详细";
 
     meta.append(bookName, score);
-    card.append(meta, chunkId, text);
+    body.append(meta, chunkId, text, detail);
+    card.append(rank, body);
     makeReferenceCardInteractive(card, context);
     referenceList.append(card);
   });
@@ -215,10 +249,30 @@ function closeReferenceModal() {
   modal.hidden = true;
 }
 
+function splitParagraphs(text) {
+  return String(text || "")
+    .split(/\n+/)
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function formatTime() {
+  const now = new Date();
+  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
+}
+
+function buildPreview(text) {
+  const normalized = String(text || "").replace(/\s+/g, " ").trim();
+  if (normalized.length <= REFERENCE_PREVIEW_LENGTH) {
+    return normalized;
+  }
+  return `${normalized.slice(0, REFERENCE_PREVIEW_LENGTH)}...`;
+}
+
 function setLoading(isLoading) {
   sendButton.disabled = isLoading;
   sendButton.classList.toggle("is-loading", isLoading);
-  sendButton.querySelector("span:last-child").textContent = isLoading ? "生成中" : "发送";
+  sendButton.querySelector("span:last-child").textContent = isLoading ? "..." : "➤";
   topKValue.textContent = String(TOP_K);
 }
 
