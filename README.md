@@ -55,6 +55,26 @@ Run the full RAG question-answer flow:
 python -m src.main ask "主角第一次见到某人是什么时候？"
 ```
 
+Start the minimal Flask API:
+
+```powershell
+python -m src.app
+```
+
+Open the lightweight chat frontend:
+
+```text
+http://127.0.0.1:5000/
+```
+
+Ask through the API:
+
+```powershell
+curl -X POST http://127.0.0.1:5000/ask `
+  -H "Content-Type: application/json" `
+  -d "{\"question\":\"主角第一次见到某人是什么时候？\",\"top_k\":5}"
+```
+
 You can also start the interactive console menu:
 
 ```powershell

@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>FictionRag</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="styles.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <main class="app-shell" aria-label="FictionRag chat prototype">
+    <aside class="sidebar" aria-label="RAG status">
+      <div class="brand">
+        <div class="brand-mark" aria-hidden="true">FR</div>
+        <div>
+          <h1>FictionRag</h1>
+          <p>小说原文问答助手</p>
+        </div>
+      </div>
+
+      <section class="status-panel" aria-label="Index status">
+        <div class="status-row">
+          <span class="status-label">索引</span>
+          <span class="status-value" id="index-path-value">data/index/chunks.jsonl</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">模式</span>
+          <span class="status-value">Hybrid RAG</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">Top K</span>
+          <span class="status-value" id="top-k-value">5</span>
+        </div>
+        <div class="status-row">
+          <span class="status-label">书籍路由</span>
+          <span class="status-value">Route 5</span>
+        </div>
+      </section>
+
+      <section class="books-panel" aria-label="Loaded books">
+        <h2 id="books-heading">当前书库</h2>
+        <ul id="books-list">
+          <li><span>加载中</span><strong>...</strong></li>
+        </ul>
+      </section>
+    </aside>
+
+    <section class="chat-panel" aria-label="Conversation">
+      <header class="chat-header">
+        <div>
+          <p class="eyebrow">基于小说原文回答</p>
+          <h2>问答对话</h2>
+        </div>
+        <div class="header-actions" aria-label="Session actions">
+          <button type="button" aria-label="查看召回">
+            <span aria-hidden="true">#</span>
+            <span>召回</span>
+          </button>
+          <button type="button" aria-label="重建索引">
+            <span aria-hidden="true">+</span>
+            <span>索引</span>
+          </button>
+        </div>
+      </header>
+
+      <div class="conversation" id="conversation" aria-live="polite">
+        <article class="message message-user">
+          <div class="avatar" aria-hidden="true">你</div>
+          <div class="bubble">
+            <p>主角第一次遇到温恩港的向导是在什么时候？</p>
+          </div>
+        </article>
+
+        <article class="message message-assistant">
+          <div class="avatar" aria-hidden="true">AI</div>
+          <div class="bubble">
+            <p>从召回片段看，主角是在第四卷的温恩港章节中第一次遇到那位向导。当时他刚抵达港口，正在确认委托地点，向导主动上前说明城内路线和码头规矩。</p>
+            <p class="answer-note">依据主要来自片段 book-000041 与 book-000042，原文中没有给出更精确的钟点。</p>
+          </div>
+        </article>
+      </div>
+
+      <section class="references" aria-label="Retrieved references">
+        <div class="references-title">
+          <h3 id="references-heading">Top 5 原文依据</h3>
+          <span>dense + BM25 + scene expansion</span>
+        </div>
+
+        <div class="reference-list" id="reference-list">
+          <article class="reference-card">
+            <div class="reference-meta">
+              <span>第四卷</span>
+              <strong>score 0.8421</strong>
+            </div>
+            <p class="chunk-id">chunk_id: book-000041</p>
+            <p>港口的晨雾还没有散去，少年背着行囊站在路牌前。一个披着短斗篷的人停下脚步，问他是不是第一次来到温恩港。</p>
+          </article>
+
+          <article class="reference-card">
+            <div class="reference-meta">
+              <span>第四卷</span>
+              <strong>score 0.8194</strong>
+            </div>
+            <p class="chunk-id">chunk_id: book-000042</p>
+            <p>向导指向码头后方的石阶，提醒他委托所不在集市里，而在靠近旧钟楼的小巷尽头。</p>
+          </article>
+
+          <article class="reference-card">
+            <div class="reference-meta">
+              <span>第四卷</span>
+              <strong>score 0.7763</strong>
+            </div>
+            <p class="chunk-id">chunk_id: book-000043</p>
+            <p>少年道谢后跟着对方穿过人群，第一次听见温恩港冒险者之间默认遵守的码头规矩。</p>
+          </article>
+
+          <article class="reference-card muted">
+            <div class="reference-meta">
+              <span>第一卷</span>
+              <strong>score 0.6918</strong>
+            </div>
+            <p class="chunk-id">chunk_id: book-000117</p>
+            <p>这个片段提到主角早期旅行经验，但没有出现温恩港或向导，相关性较弱。</p>
+          </article>
+
+          <article class="reference-card muted">
+            <div class="reference-meta">
+              <span>第十卷</span>
+              <strong>score 0.6539</strong>
+            </div>
+            <p class="chunk-id">chunk_id: book-000508</p>
+            <p>这里回忆了旧港口的传闻，可用于辅助判断地点背景，不能单独回答第一次相遇。</p>
+          </article>
+        </div>
+      </section>
+
+      <form class="composer" id="composer" aria-label="Question composer">
+        <label for="question">问题</label>
+        <textarea id="question" rows="2">某个人的真实身份有没有被揭示？</textarea>
+        <button type="submit" id="send-button" aria-label="发送问题">
+          <span aria-hidden="true">↑</span>
+          <span>发送</span>
+        </button>
+      </form>
+    </section>
+  </main>
+
+  <div class="modal-backdrop" id="reference-modal" hidden>
+    <article class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <header class="modal-header">
+        <div>
+          <p class="eyebrow" id="modal-book">原文依据</p>
+          <h2 id="modal-title">chunk_id</h2>
+        </div>
+        <button type="button" class="modal-close" id="modal-close" aria-label="关闭">×</button>
+      </header>
+      <div class="modal-meta" id="modal-meta"></div>
+      <div class="modal-text" id="modal-text"></div>
+    </article>
+  </div>
+</body>
+</html>

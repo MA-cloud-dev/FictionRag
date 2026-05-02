@@ -33,15 +33,14 @@ if __package__ in {None, ""}:
         run_evaluation,
     )
     from src.epub_importer import EpubImportError, import_epub_to_text
-    from src.index_store import IndexStoreError, load_chunks, save_chunks
+    from src.index_store import IndexStoreError, save_chunks
     from src.llm import LLMClient
-    from src.prompts import build_user_prompt
     from src.retriever import (
         DEFAULT_BOOK_RESULT_CAP,
         DEFAULT_BOOK_ROUTE_COUNT,
         RetrievalResult,
-        retrieve,
     )
+    from src.rag_service import answer_question, retrieve_contexts
     from src.reranker import RerankerClient
 else:
     from .chunker import build_chunks
@@ -68,15 +67,14 @@ else:
         run_evaluation,
     )
     from .epub_importer import EpubImportError, import_epub_to_text
-    from .index_store import IndexStoreError, load_chunks, save_chunks
+    from .index_store import IndexStoreError, save_chunks
     from .llm import LLMClient
-    from .prompts import build_user_prompt
     from .retriever import (
         DEFAULT_BOOK_RESULT_CAP,
         DEFAULT_BOOK_ROUTE_COUNT,
         RetrievalResult,
-        retrieve,
     )
+    from .rag_service import answer_question, retrieve_contexts
     from .reranker import RerankerClient
 
 
@@ -256,14 +254,12 @@ def run_retrieve(args: argparse.Namespace) -> int:
 
 
 def run_ask(args: argparse.Namespace) -> int:
-    results = _retrieve_for_question(
+    rag_answer = answer_question(
         question=args.question,
-        index_path=Path(args.index_path),
         top_k=args.top_k,
+        index_path=Path(args.index_path),
     )
-    user_prompt = build_user_prompt(args.question, results)
-    llm_client = LLMClient(load_llm_config())
-    answer = llm_client.answer(user_prompt)
+    results = rag_answer.contexts
 
     print("Question:")
     print(args.question)
@@ -271,7 +267,7 @@ def run_ask(args: argparse.Namespace) -> int:
     print("Retrieved Context:")
     print_retrieval_results(results, top_k=args.top_k, include_header=False)
     print("Answer:")
-    print(answer)
+    print(rag_answer.answer)
     return 0
 
 
@@ -417,10 +413,7 @@ def _retrieve_for_question(
     index_path: Path,
     top_k: int,
 ) -> list[RetrievalResult]:
-    chunks = load_chunks(index_path)
-    embedding_client = EmbeddingClient(load_embedding_config())
-    question_embedding = embedding_client.embed_text(question)
-    return retrieve(question_embedding, chunks, top_k=top_k, query_text=question)
+    return retrieve_contexts(question=question, index_path=index_path, top_k=top_k)
 
 
 def _resolve_book_names(book_paths: list[Path], book_names: list[str] | None) -> list[str]:
