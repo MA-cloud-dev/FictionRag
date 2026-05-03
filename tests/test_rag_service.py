@@ -130,6 +130,7 @@ def test_answer_question_rewrites_and_answers_with_second_context(monkeypatch):
     ]
     FakeLLMClient.answer_response = "二次答案"
     patch_clients(monkeypatch, chunks)
+    monkeypatch.setattr("src.rag_service.generate_entity_rewrites", lambda question: ["改写问题"])
 
     result = answer_question("问题？", top_k=2, index_path=Path("index.jsonl"))
 
@@ -141,6 +142,51 @@ def test_answer_question_rewrites_and_answers_with_second_context(monkeypatch):
     assert len(FakeLLMClient.chats) == 2
     assert len(FakeLLMClient.answer_prompts) == 1
     assert "二次召回原文" in FakeLLMClient.answer_prompts[0]
+
+
+def test_answer_question_retries_with_rewrite_when_answer_is_unhelpful(monkeypatch):
+    reset_fakes()
+    FakeEmbeddingClient.embeddings = {
+        "问题？": [0.8, 0.2],
+        "改写问题": [0.0, 1.0],
+    }
+    chunks = [
+        Chunk(
+            id="first",
+            book_name="book",
+            chunk_index=1,
+            start=0,
+            end=10,
+            text="第一次召回原文",
+            embedding=[1.0, 0.0],
+        ),
+        Chunk(
+            id="rewrite",
+            book_name="book",
+            chunk_index=2,
+            start=11,
+            end=20,
+            text="二次召回原文",
+            embedding=[0.0, 1.0],
+        ),
+    ]
+    FakeLLMClient.chat_responses = [
+        '{"answerable": true, "missing_info": [], "clarification_questions": []}',
+        '{"answerable": true, "missing_info": [], "clarification_questions": []}',
+        "澄清建议",
+    ]
+    FakeLLMClient.answer_response = "目前原文片段中没有足够信息确认答案。"
+    patch_clients(monkeypatch, chunks)
+    monkeypatch.setattr("src.rag_service.generate_entity_rewrites", lambda question: ["改写问题"])
+
+    result = answer_question("问题？", top_k=2, index_path=Path("index.jsonl"))
+
+    assert result.used_rewrite is True
+    assert result.rewritten_queries == ["改写问题"]
+    assert result.answer == "澄清建议"
+    assert FakeEmbeddingClient.queries == ["问题？", "改写问题"]
+    assert len(FakeLLMClient.chats) == 3
+    assert len(FakeLLMClient.answer_prompts) == 2
 
 
 def test_answer_question_rewrites_then_returns_clarification(monkeypatch):
@@ -179,6 +225,7 @@ def test_answer_question_rewrites_then_returns_clarification(monkeypatch):
         "澄清建议",
     ]
     patch_clients(monkeypatch, chunks)
+    monkeypatch.setattr("src.rag_service.generate_entity_rewrites", lambda question: ["改写问题"])
 
     result = answer_question("问题？", top_k=2, index_path=Path("index.jsonl"))
 
@@ -220,6 +267,37 @@ def test_answer_question_invalid_answerability_json_falls_back_to_original_flow(
     assert len(FakeLLMClient.answer_prompts) == 1
 
 
+def test_answer_question_unanswerable_without_entity_rewrite_returns_clarification(monkeypatch):
+    reset_fakes()
+    chunks = [
+        Chunk(
+            id="hit",
+            book_name="book",
+            chunk_index=1,
+            start=0,
+            end=10,
+            text="命中的原文",
+            embedding=[1.0, 0.0],
+        )
+    ]
+    FakeLLMClient.chat_responses = [
+        '{"answerable": false, "missing_info": ["当前片段不足"], '
+        '"clarification_questions": ["请补充人物"]}',
+        "澄清建议",
+    ]
+    patch_clients(monkeypatch, chunks)
+    monkeypatch.setattr("src.rag_service.generate_entity_rewrites", lambda question: [])
+
+    result = answer_question("问题？", top_k=1, index_path=Path("index.jsonl"))
+
+    assert result.answer == "澄清建议"
+    assert result.used_rewrite is False
+    assert result.rewritten_queries == []
+    assert FakeEmbeddingClient.queries == ["问题？"]
+    assert len(FakeLLMClient.chats) == 2
+    assert FakeLLMClient.answer_prompts == []
+
+
 def test_answer_question_unanswerable_always_rewrites_once(monkeypatch):
     reset_fakes()
     FakeEmbeddingClient.embeddings = {
@@ -256,6 +334,7 @@ def test_answer_question_unanswerable_always_rewrites_once(monkeypatch):
         "澄清建议",
     ]
     patch_clients(monkeypatch, chunks)
+    monkeypatch.setattr("src.rag_service.generate_entity_rewrites", lambda question: ["改写问题"])
 
     result = answer_question("问题？", top_k=1, index_path=Path("index.jsonl"))
 

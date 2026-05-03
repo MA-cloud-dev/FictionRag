@@ -13,6 +13,7 @@ from typing import Any
 from .chunker import Chunk
 from .config import DEFAULT_INDEX_PATH, DEFAULT_TOP_K, load_embedding_config, load_llm_config
 from .embeddings import EmbeddingClient
+from .entity_rewriter import generate_entity_rewrites
 from .index_store import load_chunks
 from .llm import LLMClient
 from .prompts import (
@@ -23,9 +24,6 @@ from .prompts import (
     build_user_prompt,
 )
 from .retriever import RetrievalResult, retrieve
-
-
-MAX_REWRITE_QUERIES = 3
 
 
 @dataclass(frozen=True)
@@ -101,6 +99,18 @@ def answer_question(
 
     if _is_answerable(first_answerability):
         answer = llm_client.answer(build_user_prompt(question, contexts))
+        rewrite_queries = generate_entity_rewrites(question)
+        if _should_retry_with_rewrite(answer) and rewrite_queries:
+            return _answer_with_rewrite(
+                question=question,
+                first_contexts=contexts,
+                rewrite_queries=rewrite_queries,
+                chunks=chunks,
+                embedding_client=embedding_client,
+                llm_client=llm_client,
+                top_k=top_k,
+                first_answerability=first_answerability,
+            )
         return RagAnswer(
             question=question,
             answer=answer,
@@ -110,7 +120,7 @@ def answer_question(
             used_rewrite=False,
         )
 
-    rewrite_queries = _rewrite_queries(first_answerability)
+    rewrite_queries = generate_entity_rewrites(question)
     if not rewrite_queries:
         answer = llm_client.chat(
             SYSTEM_PROMPT,
@@ -126,11 +136,33 @@ def answer_question(
             used_rewrite=False,
         )
 
+    return _answer_with_rewrite(
+        question=question,
+        first_contexts=contexts,
+        rewrite_queries=rewrite_queries,
+        chunks=chunks,
+        embedding_client=embedding_client,
+        llm_client=llm_client,
+        top_k=top_k,
+        first_answerability=first_answerability,
+    )
+
+
+def _answer_with_rewrite(
+    question: str,
+    first_contexts: list[RetrievalResult],
+    rewrite_queries: list[str],
+    chunks: list[Chunk],
+    embedding_client: EmbeddingClient,
+    llm_client: LLMClient,
+    top_k: int,
+    first_answerability: dict[str, object],
+) -> RagAnswer:
     rewrite_result_sets = [
         _retrieve_with_client(rewrite_query, chunks, embedding_client, top_k)
         for rewrite_query in rewrite_queries
     ]
-    merged_contexts = _merge_contexts([contexts, *rewrite_result_sets], top_k=top_k)
+    merged_contexts = _merge_contexts([first_contexts, *rewrite_result_sets], top_k=top_k)
     second_answerability = _judge_answerability(llm_client, question, merged_contexts)
     if second_answerability is None:
         answer = llm_client.chat(
@@ -149,6 +181,12 @@ def answer_question(
 
     if _is_answerable(second_answerability):
         answer = llm_client.answer(build_user_prompt(question, merged_contexts))
+        if _should_retry_with_rewrite(answer):
+            answer = llm_client.chat(
+                SYSTEM_PROMPT,
+                build_clarification_prompt(question, merged_contexts, second_answerability),
+                temperature=0,
+            )
     else:
         answer = llm_client.chat(
             SYSTEM_PROMPT,
@@ -211,14 +249,9 @@ def _parse_json_object(content: str) -> dict[str, Any]:
 
 def _normalize_answerability(raw: dict[str, Any]) -> dict[str, object]:
     answerable = _as_bool(raw.get("answerable"))
-    rewrite_queries = _string_list(raw.get("rewrite_queries"), limit=MAX_REWRITE_QUERIES)
-    if answerable:
-        rewrite_queries = []
-
     return {
         "answerable": answerable,
         "missing_info": _string_list(raw.get("missing_info"), limit=5),
-        "rewrite_queries": rewrite_queries,
         "clarification_questions": _string_list(raw.get("clarification_questions"), limit=3),
     }
 
@@ -251,11 +284,21 @@ def _is_answerable(answerability: dict[str, object]) -> bool:
     return bool(answerability.get("answerable"))
 
 
-def _rewrite_queries(answerability: dict[str, object]) -> list[str]:
-    value = answerability.get("rewrite_queries")
-    if not isinstance(value, list):
-        return []
-    return _string_list(value, limit=MAX_REWRITE_QUERIES)
+def _should_retry_with_rewrite(answer: str) -> bool:
+    stripped = answer.strip()
+    if not stripped:
+        return True
+    insufficient_markers = (
+        "没有足够信息",
+        "没有足够的信息",
+        "信息不足",
+        "无法确认",
+        "无法回答",
+        "原文未提供",
+        "原文中未提供",
+        "不能确定",
+    )
+    return any(marker in stripped for marker in insufficient_markers)
 
 
 def _merge_contexts(

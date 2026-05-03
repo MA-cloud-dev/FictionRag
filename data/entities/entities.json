@@ -1,0 +1,86 @@
+[
+  {
+    "id": "rudeus",
+    "type": "person",
+    "canonical": "鲁迪乌斯",
+    "aliases": ["鲁迪", "主角", "鲁迪乌斯", "鲁迪乌斯·格雷拉特", "鲁迪乌斯?格雷拉特"]
+  },
+  {
+    "id": "roxy",
+    "type": "person",
+    "canonical": "洛琪希",
+    "aliases": ["洛琪希", "洛琪希·米格路迪亚", "洛琪希?米格路迪亚"]
+  },
+  {
+    "id": "eris",
+    "type": "person",
+    "canonical": "艾莉丝",
+    "aliases": ["艾莉丝", "艾莉丝·伯雷亚斯·格雷拉特", "艾莉丝?伯雷亚斯?格雷拉特"]
+  },
+  {
+    "id": "sylphiette",
+    "type": "person",
+    "canonical": "希露菲",
+    "aliases": ["希露菲", "希露菲叶特", "菲兹", "菲兹前辈"]
+  },
+  {
+    "id": "paul",
+    "type": "person",
+    "canonical": "保罗",
+    "aliases": ["保罗", "保罗·格雷拉特", "保罗?格雷拉特"]
+  },
+  {
+    "id": "zenith",
+    "type": "person",
+    "canonical": "塞妮丝",
+    "aliases": ["塞妮丝", "塞妮丝·格雷拉特", "塞妮丝?格雷拉特"]
+  },
+  {
+    "id": "lilia",
+    "type": "person",
+    "canonical": "莉莉雅",
+    "aliases": ["莉莉雅", "莉莉亚"]
+  },
+  {
+    "id": "aisha",
+    "type": "person",
+    "canonical": "爱夏",
+    "aliases": ["爱夏", "爱夏·格雷拉特", "爱夏?格雷拉特"]
+  },
+  {
+    "id": "norn",
+    "type": "person",
+    "canonical": "诺伦",
+    "aliases": ["诺伦", "诺伦·格雷拉特", "诺伦?格雷拉特"]
+  },
+  {
+    "id": "ruijerd",
+    "type": "person",
+    "canonical": "瑞杰路德",
+    "aliases": ["瑞杰路德", "瑞杰路德·斯佩路迪亚", "瑞杰路德?斯佩路迪亚"]
+  },
+  {
+    "id": "zanoba",
+    "type": "person",
+    "canonical": "札诺巴",
+    "aliases": ["札诺巴", "札诺巴·西隆", "札诺巴?西隆", "西隆王国第三王子"]
+  },
+  {
+    "id": "cliff",
+    "type": "person",
+    "canonical": "克里夫",
+    "aliases": ["克里夫", "克里夫·格利摩尔", "克里夫?格利摩尔"]
+  },
+  {
+    "id": "nanahoshi",
+    "type": "person",
+    "canonical": "七星",
+    "aliases": ["七星", "七星静香", "沉默的七星"]
+  },
+  {
+    "id": "orsted",
+    "type": "person",
+    "canonical": "奥尔斯帝德",
+    "aliases": ["奥尔斯帝德", "龙神", "龙神奥尔斯帝德"]
+  }
+]

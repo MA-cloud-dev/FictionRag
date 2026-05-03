@@ -10,6 +10,7 @@ from pathlib import Path
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BOOK_PATH = PROJECT_ROOT / "data" / "novels" / "book.txt"
 DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "index" / "chunks.jsonl"
+DEFAULT_ENTITIES_PATH = PROJECT_ROOT / "data" / "entities" / "entities.json"
 DEFAULT_TOP_K = 5
 CHUNK_SIZE = 800
 CHUNK_MAX_SIZE = 1000

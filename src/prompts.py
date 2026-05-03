@@ -61,21 +61,21 @@ def build_answerability_prompt(question: str, results: list[RetrievalResult]) ->
 
 判断要求：
 1. 只根据“小说原文片段”判断，不使用常识、猜测或其他作品信息。
-2. 只做两类判断：如果片段足够直接回答问题，answerable=true；否则 answerable=false。
-3. answerable=true 时，rewrite_queries 必须为空数组。
-4. answerable=false 时，必须生成 1 到 3 条 rewrite_queries，用于重新检索。
-5. rewrite_queries 只用于检索，不用于回答；必须保留用户原问题意图，不要编造片段中没有的事实。
-6. rewrite_queries 应优先把不顺、口语、倒装或抽象的问题，改写成更贴近小说原文表达的检索问题。
-7. 如果问题中有明确实体、事件、地点或时间，要尽量保留这些信息；如果有同义表达，可以改成更可能出现在原文中的说法。
-8. missing_info 用于记录当前片段为什么不能直接回答，最多 5 条。
-9. clarification_questions 是最终仍无法回答时给用户的简短追问，最多 3 条。
-10. 只输出一个 JSON 对象，不要使用 Markdown 代码块。
+2. 只做两类判断：如果片段足够直接、明确回答用户原问题，answerable=true；否则 answerable=false。
+3. 只有当答案可以被片段中的明确证据直接支持时，才能 answerable=true。
+4. 如果片段只是相似、相关、可能有帮助，或需要推断、猜测、跨片段脑补，必须 answerable=false。
+5. 如果用户问题询问“是谁、叫什么、多少、哪里、什么时候、关系、种族”等核心槽位，片段必须明确给出该槽位的具体答案，否则 answerable=false。
+6. 如果问题询问“活了多少岁、寿命、死亡年龄”等生命周期信息，片段必须明确给出生卒年份、死亡年龄或等价证据；只出现某个阶段的年龄不能判定为可回答。
+7. 如果你基于当前片段给出的最终回答会包含“信息不足、无法确认、无法回答、原文未提供”等表达，必须 answerable=false。
+8. 如果多个片段来自不同书籍，不要混合不同书籍内容来判断为可回答。
+9. missing_info 用于记录当前片段为什么不能直接回答，最多 5 条。
+10. clarification_questions 是最终仍无法回答时给用户的简短追问，最多 3 条。
+11. 只输出一个 JSON 对象，不要使用 Markdown 代码块。
 
 JSON 格式：
 {{
   "answerable": false,
   "missing_info": ["缺少的信息"],
-  "rewrite_queries": ["改写后的检索问题"],
   "clarification_questions": ["需要用户确认的问题"]
 }}
 
