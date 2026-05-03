@@ -3,26 +3,25 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FictionRag</title>
+  <title>FictionRag | 清新墨绿知识助手</title>
   <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700&family=Playfair+Display:wght@700&family=Noto+Serif+SC:wght@400;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="styles.css">
   <script src="app.js" defer></script>
 </head>
 <body>
   <main class="app-shell" aria-label="FictionRag chat">
+    <!-- Sidebar -->
     <aside class="sidebar parchment-panel" aria-label="Knowledge base">
-      <div class="corner corner-tl" aria-hidden="true"></div>
-      <div class="corner corner-tr" aria-hidden="true"></div>
-      <div class="corner corner-bl" aria-hidden="true"></div>
-      <div class="corner corner-br" aria-hidden="true"></div>
-
       <section class="brand">
         <div class="brand-mark" aria-hidden="true">
-          <span class="brand-compass">✦</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5v-15A2.5 2.5 0 0 1 6.5 2H20v20H6.5a2.5 2.5 0 0 1-0.5-5.5Z"/><path d="M8 7h6"/><path d="M8 11h8"/></svg>
         </div>
         <div>
           <h1>FictionRAG</h1>
-          <p>小说知识问答助手</p>
+          <p>清新墨绿问答助手</p>
         </div>
       </section>
 
@@ -31,161 +30,107 @@
       <section class="knowledge-picker" aria-label="Current knowledge base">
         <p class="section-label">当前知识库</p>
         <button type="button" class="book-select">
-          <span aria-hidden="true">▧</span>
-          <span id="books-heading">加载知识库</span>
-          <span aria-hidden="true">⌄</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect width="7" height="7" x="3" y="3" rx="1"/><rect width="7" height="7" x="14" y="3" rx="1"/><rect width="7" height="7" x="14" y="14" rx="1"/><rect width="7" height="7" x="3" y="14" rx="1"/></svg>
+          <span id="books-heading">同步中...</span>
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="m6 9 6 6 6-6"/></svg>
         </button>
       </section>
 
       <section class="status-panel" aria-label="Retrieval settings">
         <div class="status-row">
           <span class="status-label">检索模式</span>
-          <span class="status-value">Hybrid RAG</span>
+          <span class="status-value">Hybrid</span>
         </div>
         <div class="status-row">
           <span class="status-label">Top K</span>
           <span class="status-value" id="top-k-value">5</span>
         </div>
         <div class="status-row">
-          <span class="status-label">排序</span>
-          <span class="status-value">BM25 + Dense</span>
+          <span class="status-label">重排序</span>
+          <span class="status-value">Active</span>
         </div>
       </section>
 
       <section class="books-panel" aria-label="Loaded books">
-        <p class="section-label">全部书卷</p>
+        <p class="section-label">书库索引</p>
         <ul id="books-list">
-          <li><span>加载中</span><strong>...</strong></li>
+          <li>加载中...</li>
         </ul>
-        <p class="index-path" id="index-path-value">data/index/chunks.jsonl</p>
+        <p class="index-path" id="index-path-value" style="display: none;">data/index/chunks.jsonl</p>
       </section>
 
       <div class="sidebar-motto" aria-hidden="true">
-        <div class="motto-compass"></div>
-        <p>知识即魔法，<br>探索未知，记录真相</p>
+        <p>「 探寻文字间的深意 」</p>
       </div>
 
       <div class="sidebar-actions">
-        <button type="button">
-          <span aria-hidden="true">⌫</span>
-          <span>清空对话</span>
+        <button type="button" id="reset-button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/></svg>
+          <span>重置</span>
         </button>
-        <button type="button">
-          <span aria-hidden="true">⇩</span>
-          <span>导出记录</span>
+        <button type="button" id="export-button">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" x2="12" y1="15" y2="3"/></svg>
+          <span>导出</span>
         </button>
       </div>
     </aside>
 
+    <!-- Chat Panel -->
     <section class="chat-panel parchment-panel" aria-label="Conversation">
-      <div class="corner corner-tl" aria-hidden="true"></div>
-      <div class="corner corner-tr" aria-hidden="true"></div>
-      <div class="corner corner-bl" aria-hidden="true"></div>
-      <div class="corner corner-br" aria-hidden="true"></div>
-
-      <header class="panel-heading chat-heading">
-        <span class="heading-star" aria-hidden="true">✷</span>
-        <h2>对话</h2>
+      <header class="panel-heading">
+        <h2>对话详情</h2>
+        <p id="chat-subtitle">AI 正在为您解析文本</p>
       </header>
 
-      <div class="conversation" id="conversation" aria-live="polite">
-        <article class="message message-user">
-          <div class="bubble">
-            <p>七星对于转移事件的分析是什么？</p>
-          </div>
-          <div class="portrait user-portrait" aria-hidden="true">你</div>
-          <time>10:27 ✓</time>
-        </article>
+      <figure class="character-standee" aria-hidden="true">
+        <img src="assets/character.png" alt="">
+      </figure>
 
+      <div class="conversation" id="conversation" aria-live="polite">
         <article class="message message-assistant">
-          <div class="assistant-seal" aria-hidden="true">AI</div>
+          <div class="assistant-seal" aria-hidden="true">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
+          </div>
           <div class="bubble">
-            <p>根据小说原文片段，七星对转移事件的分析主要集中在以下两点：</p>
-            <p>1. 时间上的异常性：她认为世界的时间点出现异常，转移事件可能与不稳定的线性时间流动有关。</p>
-            <p>2. 因果与干预的谨慎：她提出时空移动的理论推测，但提醒需要持续验证，避免过度还原没有依据的原因。</p>
-            <div class="message-tools" aria-hidden="true">
-              <span>♡ 复制</span>
-              <span>↻ 重新生成</span>
-              <time>10:28</time>
-            </div>
+            <p>您好！我是您的清新墨绿助手。请问今天有什么可以帮您的？</p>
           </div>
         </article>
       </div>
 
       <form class="composer" id="composer" aria-label="Question composer">
-        <div class="quill" aria-hidden="true"></div>
-        <textarea id="question" rows="3" placeholder="输入你的问题，按 Ctrl + Enter 发送">某个人的真实身份有没有被揭示？</textarea>
-        <button type="submit" id="send-button" aria-label="发送问题">
-          <span aria-hidden="true">➤</span>
+        <textarea id="question" rows="1" placeholder="在此输入您的问题..." aria-label="输入问题"></textarea>
+        <button type="submit" id="send-button" aria-label="发送">
+          <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m22 2-7 20-4-9-9-4Z"/><path d="M22 2 11 13"/></svg>
         </button>
       </form>
     </section>
 
+    <!-- References Panel -->
     <aside class="references parchment-panel" aria-label="Retrieved references">
-      <div class="corner corner-tl" aria-hidden="true"></div>
-      <div class="corner corner-tr" aria-hidden="true"></div>
-      <div class="corner corner-bl" aria-hidden="true"></div>
-      <div class="corner corner-br" aria-hidden="true"></div>
-
-      <header class="panel-heading reference-heading">
-        <span aria-hidden="true">▧</span>
-        <div>
-          <h2 id="references-heading">召回文本</h2>
-          <p>分数越高表示相关性越强</p>
-        </div>
+      <header class="reference-heading">
+        <h2 id="references-heading">关联片段</h2>
       </header>
 
       <div class="reference-list" id="reference-list">
-        <article class="reference-card">
-          <div class="reference-rank">1</div>
-          <div class="reference-body">
-            <div class="reference-meta">
-              <span>第四卷 · 温恩港</span>
-              <strong>score 0.8421</strong>
-            </div>
-            <p class="chunk-id">chunk_id: book-000041</p>
-            <p>港口的晨雾还没有散去，少年背着行囊站在路牌前。一个披着短斗篷的人停下脚步，问他是不是第一次来到温恩港。</p>
-            <span class="detail-link">查看详细</span>
-          </div>
-        </article>
-
-        <article class="reference-card">
-          <div class="reference-rank">2</div>
-          <div class="reference-body">
-            <div class="reference-meta">
-              <span>第四卷 · 旧钟楼</span>
-              <strong>score 0.8194</strong>
-            </div>
-            <p class="chunk-id">chunk_id: book-000042</p>
-            <p>向导指向码头后方的石阶，提醒他委托所不在集市里，而在靠近旧钟楼的小巷尽头。</p>
-            <span class="detail-link">查看详细</span>
-          </div>
-        </article>
-
-        <article class="reference-card">
-          <div class="reference-rank">3</div>
-          <div class="reference-body">
-            <div class="reference-meta">
-              <span>第四卷 · 码头规矩</span>
-              <strong>score 0.7763</strong>
-            </div>
-            <p class="chunk-id">chunk_id: book-000043</p>
-            <p>少年道谢后跟着对方穿过人群，第一次听见温恩港冒险者之间默认遵守的码头规矩。</p>
-            <span class="detail-link">查看详细</span>
-          </div>
+        <article class="reference-card empty">
+          <p>召回片段将在此处显示</p>
         </article>
       </div>
 
-      <footer class="reference-footnote">混合检索：BM25 + Dense Embedding</footer>
+      <footer class="reference-footnote">
+        基于深度语义向量检索
+      </footer>
     </aside>
   </main>
 
+  <!-- Modal -->
   <div class="modal-backdrop" id="reference-modal" hidden>
-    <article class="modal-card parchment-panel" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <button type="button" class="modal-close" id="modal-close" aria-label="关闭">×</button>
-      <p class="modal-book" id="modal-book">原文依据</p>
-      <h2 id="modal-title">chunk_id</h2>
-      <div class="ornament-line" aria-hidden="true"></div>
+    <article class="modal-card" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <button type="button" class="modal-close" id="modal-close" aria-label="关闭">
+        <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+      </button>
+      <span class="modal-book" id="modal-book">原文依据</span>
+      <h2 id="modal-title">内容详情</h2>
       <div class="modal-meta" id="modal-meta"></div>
       <div class="modal-text" id="modal-text"></div>
     </article>
