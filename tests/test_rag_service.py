@@ -34,6 +34,21 @@ class FakeLLMClient:
         return FakeLLMClient.answer_response
 
 
+class FakeRerankerClient:
+    calls: list[tuple[str, list[str]]] = []
+    scores_by_document: dict[str, float] = {}
+
+    def __init__(self, config) -> None:
+        self.config = config
+
+    def score(self, query: str, documents: list[str]) -> list[float]:
+        FakeRerankerClient.calls.append((query, documents))
+        return [
+            FakeRerankerClient.scores_by_document.get(document, 0.1)
+            for document in documents
+        ]
+
+
 def reset_fakes() -> None:
     FakeEmbeddingClient.queries = []
     FakeEmbeddingClient.embeddings = {"问题？": [1.0, 0.0]}
@@ -41,6 +56,13 @@ def reset_fakes() -> None:
     FakeLLMClient.answer_response = "答案"
     FakeLLMClient.chats = []
     FakeLLMClient.answer_prompts = []
+    FakeRerankerClient.calls = []
+    FakeRerankerClient.scores_by_document = {
+        "命中的原文": 0.9,
+        "二次召回原文": 0.9,
+        "第一次召回原文": 0.8,
+        "无关原文": 0.1,
+    }
 
 
 def patch_clients(monkeypatch, chunks: list[Chunk]) -> None:
@@ -49,6 +71,8 @@ def patch_clients(monkeypatch, chunks: list[Chunk]) -> None:
     monkeypatch.setattr("src.rag_service.EmbeddingClient", FakeEmbeddingClient)
     monkeypatch.setattr("src.rag_service.load_llm_config", lambda: object())
     monkeypatch.setattr("src.rag_service.LLMClient", FakeLLMClient)
+    monkeypatch.setattr("src.rag_service.load_reranker_config", lambda: object())
+    monkeypatch.setattr("src.rag_service.RerankerClient", FakeRerankerClient)
 
 
 def test_answer_question_retrieves_context_and_calls_llm(monkeypatch):
@@ -85,10 +109,14 @@ def test_answer_question_retrieves_context_and_calls_llm(monkeypatch):
     assert result.answer == "答案"
     assert [context.chunk_id for context in result.contexts] == ["hit"]
     assert result.used_rewrite is False
+    assert result.rerank_enabled is True
+    assert result.rerank_candidate_count == 30
     assert result.rewritten_queries == []
     assert result.answerability is not None
     assert result.answerability["answerable"] is True
     assert FakeEmbeddingClient.queries == ["问题？"]
+    assert len(FakeRerankerClient.calls) == 1
+    assert FakeRerankerClient.calls[0][0] == "问题？"
     assert len(FakeLLMClient.chats) == 1
     assert len(FakeLLMClient.answer_prompts) == 1
     assert "命中的原文" in FakeLLMClient.answer_prompts[0]
@@ -237,6 +265,45 @@ def test_answer_question_rewrites_then_returns_clarification(monkeypatch):
     assert FakeEmbeddingClient.queries == ["问题？", "改写问题"]
     assert len(FakeLLMClient.chats) == 3
     assert FakeLLMClient.answer_prompts == []
+
+
+def test_answer_question_online_rerank_promotes_lower_vector_candidate(monkeypatch):
+    reset_fakes()
+    chunks = [
+        Chunk(
+            id="vector-first",
+            book_name="book",
+            chunk_index=1,
+            start=0,
+            end=10,
+            text="向量更高但 rerank 认为普通",
+            embedding=[1.0, 0.0],
+        ),
+        Chunk(
+            id="rerank-first",
+            book_name="book",
+            chunk_index=2,
+            start=11,
+            end=20,
+            text="向量较低但 rerank 认为最相关",
+            embedding=[0.0, 1.0],
+        ),
+    ]
+    FakeRerankerClient.scores_by_document = {
+        "向量更高但 rerank 认为普通": 0.2,
+        "向量较低但 rerank 认为最相关": 0.95,
+    }
+    FakeLLMClient.chat_responses = [
+        '{"answerable": true, "missing_info": [], "clarification_questions": []}'
+    ]
+    patch_clients(monkeypatch, chunks)
+
+    result = answer_question("问题？", top_k=1, index_path=Path("index.jsonl"))
+
+    assert [context.chunk_id for context in result.contexts] == ["rerank-first"]
+    assert result.contexts[0].score == 0.95
+    assert result.rerank_enabled is True
+    assert len(FakeRerankerClient.calls) == 1
 
 
 def test_answer_question_invalid_answerability_json_falls_back_to_original_flow(monkeypatch):

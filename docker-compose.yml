@@ -1,0 +1,20 @@
+services:
+  fictionrag:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fictionrag:latest
+    container_name: fictionrag
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      FICTIONRAG_HOST: 0.0.0.0
+      FICTIONRAG_PORT: 5000
+      GUNICORN_WORKERS: 2
+      GUNICORN_THREADS: 4
+      GUNICORN_TIMEOUT: 180
+    ports:
+      - "5000:5000"
+    volumes:
+      - ./data:/app/data

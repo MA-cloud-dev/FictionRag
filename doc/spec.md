@@ -2,7 +2,7 @@
 
 ## 1. 技术定位
 
-本项目 MVP 阶段采用 Python 控制台程序实现，不接前端，不引入复杂服务架构。目标是尽快跑通 RAG 问答主链路：
+本项目 MVP 阶段采用 Python 控制台程序为主，并提供最小 Flask API 与轻量 Web 前端；不引入复杂服务架构。目标是尽快跑通 RAG 问答主链路：
 
 小说文本/EPUB -> 文本清洗 -> 文本切片 -> 向量化 -> 本地索引 -> 多书召回 -> rerank -> LLM 回答
 
@@ -12,6 +12,10 @@ MVP 优先追求简单、可调试、能验证效果。后续如果需求扩大�
 
 ```text
 FictionRag/
+  frontend/
+    index.html
+    app.js
+    styles.css
   data/
     novels/
       第一卷.txt
@@ -24,6 +28,8 @@ FictionRag/
     spec.md
   src/
     main.py
+    app.py
+    rag_service.py
     config.py
     chunker.py
     embeddings.py
@@ -31,6 +37,9 @@ FictionRag/
     index_store.py
     retriever.py
     reranker.py
+    entity_rewriter.py
+    evaluator.py
+    eval_prompts.py
     llm.py
     prompts.py
 ```
@@ -39,13 +48,18 @@ FictionRag/
 
 - `data/novels/*.txt`：清洗后的小说纯文本，每本书使用卷名作为文件名和 `book_name`。
 - `data/index/chunks.jsonl`：本地索引文件，保存 chunk、元数据和 embedding。
+- `frontend/`：本地聊天前端，用于提问、展示回答、查看召回片段和书库统计。
 - `src/main.py`：控制台入口。
+- `src/app.py`：最小 Flask API 和前端静态文件服务。
+- `src/rag_service.py`：复用的问答服务层，供 CLI 和 API 调用。
 - `src/chunker.py`：负责文本切片。
 - `src/embeddings.py`：负责调用 embedding API。
 - `src/index_store.py`：负责索引读写。
 - `src/epub_importer.py`：负责将 EPUB 清洗为纯文本。
 - `src/retriever.py`：负责 dense/BM25 两路召回、多书路由、scene-expanded 后处理和第 5 位 rescue slot。
 - `src/reranker.py`：负责调用 qwen3-rerank 对候选 chunk 重新打分。
+- `src/entity_rewriter.py`：负责保守的实体别名问题改写。
+- `src/evaluator.py`、`src/eval_prompts.py`：负责离线召回评测和评测问题生成 prompt。
 - `src/llm.py`：负责调用 LLM API。
 - `src/prompts.py`：维护问答 prompt。
 
@@ -95,10 +109,11 @@ RERANK_BM25_TOP_N = 100
 - 最终按相关性合并，默认单本书最多占 `BOOK_RESULT_CAP = 3` 个位置。
 - 对 `top_k >= 5` 的 hybrid 召回，启用 rescue slot：锁定当前 Top4，只允许第 5 位被强 BM25/稀有词证据候选替换。
 
-rerank 评测策略：
+rerank 策略：
 
-- rerank 只在 eval 中通过 `--rerank` 启用，不默认影响 `retrieve/ask`。
-- 构建候选池时使用更宽的 `RERANK_VECTOR_TOP_N = 100` 和 `RERANK_BM25_TOP_N = 100`。
+- 在线 `retrieve/ask` 和 Web 问答默认启用 rerank，可通过 `FICTIONRAG_ENABLE_RERANK=false` 临时关闭。
+- eval 中仍通过 `--rerank` 显式启用 rerank 评测。
+- 构建 rerank 候选池时使用更宽的 `RERANK_VECTOR_TOP_N = 100` 和 `RERANK_BM25_TOP_N = 100`。
 - 候选池最终保留 `RERANK_CANDIDATE_TOP_N = 30` 个 chunk。
 - 使用 qwen3-rerank 对 `query + chunk_text` 批量打分。
 - 按 rerank score 排序后输出最终 Top5，并继续执行 `BOOK_RESULT_CAP = 3`。
@@ -177,7 +192,7 @@ rerank 评测策略：
 
 ## 5. 控制台命令设计
 
-MVP 阶段提供四个主要命令：`index`、`import-epub`、`retrieve`、`ask`，并提供 `eval` 用于离线评测。
+MVP 阶段提供五个主要命令：`index`、`import-epub`、`retrieve`、`ask`、`eval`，并通过 `src/app.py` 提供本地 API 和前端。
 
 ### 5.1 index
 
@@ -340,8 +355,8 @@ score = dot(question_embedding, chunk_embedding) / (
 召回流程：
 
 1. 问题向量化。
-2. 遍历所有 chunk，计算 cosine similarity，默认在线召回取 dense top20，rerank eval 取 dense top100。
-3. 对问题文本和 chunk 正文执行 BM25，默认在线召回取 BM25 top20，rerank eval 取 BM25 top100。
+2. 遍历所有 chunk，计算 cosine similarity；基础 hybrid 召回取 dense top20，在线/评测 rerank 候选池取 dense top100。
+3. 对问题文本和 chunk 正文执行 BM25；基础 hybrid 召回取 BM25 top20，在线/评测 rerank 候选池取 BM25 top100。
 4. 对 dense 分数和 BM25 分数分别按本路最大分归一化。
 5. 同一 chunk 的最终融合分数为 `0.8 * normalized_dense + 0.2 * normalized_bm25`。
 6. 根据融合候选选择相关书籍，默认 `book_route_count=5`。
@@ -359,9 +374,9 @@ score = dot(question_embedding, chunk_embedding) / (
 - 风险：scene 扩展会挤压 Top5 空间，因此 rescue slot 只替换第 5 位，避免破坏已命中的高置信 Top4。
 - 当前策略更适合局部剧情、人物行动原因、单场景细节问答；跨章节/跨场景对比问题后续可增加章节级摘要。
 
-### 6.5 Rerank 评测链路
+### 6.5 Rerank 链路
 
-rerank 只在离线评测中启用：
+在线问答默认启用 rerank，离线评测通过 `eval --rerank` 启用同类候选池重排：
 
 ```text
 wide dense/BM25 recall

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from dataclasses import dataclass, field
@@ -11,7 +12,13 @@ from pathlib import Path
 from typing import Any
 
 from .chunker import Chunk
-from .config import DEFAULT_INDEX_PATH, DEFAULT_TOP_K, load_embedding_config, load_llm_config
+from .config import (
+    DEFAULT_INDEX_PATH,
+    DEFAULT_TOP_K,
+    load_embedding_config,
+    load_llm_config,
+    load_reranker_config,
+)
 from .embeddings import EmbeddingClient
 from .entity_rewriter import generate_entity_rewrites
 from .index_store import load_chunks
@@ -23,7 +30,18 @@ from .prompts import (
     build_clarification_prompt,
     build_user_prompt,
 )
-from .retriever import RetrievalResult, retrieve
+from .reranker import RerankerClient
+from .retriever import (
+    DEFAULT_BOOK_RESULT_CAP,
+    DEFAULT_BOOK_ROUTE_COUNT,
+    RetrievalResult,
+    retrieve,
+)
+
+
+ONLINE_RERANK_CANDIDATE_TOP_N = 30
+ONLINE_RERANK_VECTOR_TOP_N = 100
+ONLINE_RERANK_BM25_TOP_N = 100
 
 
 @dataclass(frozen=True)
@@ -34,6 +52,8 @@ class RagAnswer:
     answerability: dict[str, object] | None = None
     rewritten_queries: list[str] = field(default_factory=list)
     used_rewrite: bool = False
+    rerank_enabled: bool = False
+    rerank_candidate_count: int = 0
 
 
 def list_book_stats(index_path: Path = DEFAULT_INDEX_PATH) -> dict[str, object]:
@@ -72,7 +92,8 @@ def retrieve_contexts(
 ) -> list[RetrievalResult]:
     chunks = load_chunks(index_path)
     embedding_client = EmbeddingClient(load_embedding_config())
-    return _retrieve_with_client(question, chunks, embedding_client, top_k)
+    reranker_client = _build_online_reranker()
+    return _retrieve_with_client(question, chunks, embedding_client, top_k, reranker_client)
 
 
 def answer_question(
@@ -83,8 +104,9 @@ def answer_question(
     chunks = load_chunks(index_path)
     embedding_client = EmbeddingClient(load_embedding_config())
     llm_client = LLMClient(load_llm_config())
+    reranker_client = _build_online_reranker()
 
-    contexts = _retrieve_with_client(question, chunks, embedding_client, top_k)
+    contexts = _retrieve_with_client(question, chunks, embedding_client, top_k, reranker_client)
     first_answerability = _judge_answerability(llm_client, question, contexts)
     if first_answerability is None:
         answer = llm_client.answer(build_user_prompt(question, contexts))
@@ -95,6 +117,8 @@ def answer_question(
             answerability=None,
             rewritten_queries=[],
             used_rewrite=False,
+            rerank_enabled=reranker_client is not None,
+            rerank_candidate_count=_rerank_candidate_target(reranker_client),
         )
 
     if _is_answerable(first_answerability):
@@ -108,6 +132,7 @@ def answer_question(
                 chunks=chunks,
                 embedding_client=embedding_client,
                 llm_client=llm_client,
+                reranker_client=reranker_client,
                 top_k=top_k,
                 first_answerability=first_answerability,
             )
@@ -118,6 +143,8 @@ def answer_question(
             answerability=first_answerability,
             rewritten_queries=[],
             used_rewrite=False,
+            rerank_enabled=reranker_client is not None,
+            rerank_candidate_count=_rerank_candidate_target(reranker_client),
         )
 
     rewrite_queries = generate_entity_rewrites(question)
@@ -134,6 +161,8 @@ def answer_question(
             answerability=first_answerability,
             rewritten_queries=rewrite_queries,
             used_rewrite=False,
+            rerank_enabled=reranker_client is not None,
+            rerank_candidate_count=_rerank_candidate_target(reranker_client),
         )
 
     return _answer_with_rewrite(
@@ -143,6 +172,7 @@ def answer_question(
         chunks=chunks,
         embedding_client=embedding_client,
         llm_client=llm_client,
+        reranker_client=reranker_client,
         top_k=top_k,
         first_answerability=first_answerability,
     )
@@ -155,11 +185,12 @@ def _answer_with_rewrite(
     chunks: list[Chunk],
     embedding_client: EmbeddingClient,
     llm_client: LLMClient,
+    reranker_client: RerankerClient | None,
     top_k: int,
     first_answerability: dict[str, object],
 ) -> RagAnswer:
     rewrite_result_sets = [
-        _retrieve_with_client(rewrite_query, chunks, embedding_client, top_k)
+        _retrieve_with_client(rewrite_query, chunks, embedding_client, top_k, reranker_client)
         for rewrite_query in rewrite_queries
     ]
     merged_contexts = _merge_contexts([first_contexts, *rewrite_result_sets], top_k=top_k)
@@ -177,6 +208,8 @@ def _answer_with_rewrite(
             answerability=None,
             rewritten_queries=rewrite_queries,
             used_rewrite=True,
+            rerank_enabled=reranker_client is not None,
+            rerank_candidate_count=_rerank_candidate_target(reranker_client),
         )
 
     if _is_answerable(second_answerability):
@@ -201,6 +234,8 @@ def _answer_with_rewrite(
         answerability=second_answerability,
         rewritten_queries=rewrite_queries,
         used_rewrite=True,
+        rerank_enabled=reranker_client is not None,
+        rerank_candidate_count=_rerank_candidate_target(reranker_client),
     )
 
 
@@ -209,9 +244,99 @@ def _retrieve_with_client(
     chunks: list[Chunk],
     embedding_client: EmbeddingClient,
     top_k: int,
+    reranker_client: RerankerClient | None = None,
 ) -> list[RetrievalResult]:
     query_embedding = embedding_client.embed_text(query)
-    return retrieve(query_embedding, chunks, top_k=top_k, query_text=query)
+    if reranker_client is None:
+        return retrieve(query_embedding, chunks, top_k=top_k, query_text=query)
+
+    candidates = retrieve(
+        query_embedding,
+        chunks,
+        top_k=max(top_k, ONLINE_RERANK_CANDIDATE_TOP_N),
+        vector_top_n=ONLINE_RERANK_VECTOR_TOP_N,
+        bm25_top_n=ONLINE_RERANK_BM25_TOP_N,
+        query_text=query,
+        book_route_count=DEFAULT_BOOK_ROUTE_COUNT,
+        book_result_cap=ONLINE_RERANK_CANDIDATE_TOP_N,
+    )
+    return _rerank_and_select(
+        query=query,
+        candidates=candidates,
+        reranker_client=reranker_client,
+        top_k=top_k,
+        book_result_cap=DEFAULT_BOOK_RESULT_CAP,
+    )
+
+
+def _build_online_reranker() -> RerankerClient | None:
+    if not _online_rerank_enabled():
+        return None
+    return RerankerClient(load_reranker_config())
+
+
+def _online_rerank_enabled() -> bool:
+    value = os.getenv("FICTIONRAG_ENABLE_RERANK", "true").strip().lower()
+    return value not in {"0", "false", "no", "off"}
+
+
+def _rerank_and_select(
+    query: str,
+    candidates: list[RetrievalResult],
+    reranker_client: RerankerClient,
+    top_k: int,
+    book_result_cap: int,
+) -> list[RetrievalResult]:
+    if not candidates:
+        return []
+
+    scores = reranker_client.score(query, [candidate.text for candidate in candidates])
+    reranked = [
+        RetrievalResult(
+            chunk_id=candidate.chunk_id,
+            score=score,
+            text=candidate.text,
+            chunk=candidate.chunk,
+        )
+        for candidate, score in zip(candidates, scores)
+    ]
+    reranked.sort(key=lambda result: result.score, reverse=True)
+    return _apply_book_result_cap(reranked, top_k=top_k, book_result_cap=book_result_cap)
+
+
+def _apply_book_result_cap(
+    results: list[RetrievalResult],
+    top_k: int,
+    book_result_cap: int,
+) -> list[RetrievalResult]:
+    selected: list[RetrievalResult] = []
+    seen_ids: set[str] = set()
+    count_by_book: Counter[str] = Counter()
+    for result in results:
+        if result.chunk_id in seen_ids:
+            continue
+        if count_by_book[result.chunk.book_name] >= book_result_cap:
+            continue
+        selected.append(result)
+        seen_ids.add(result.chunk_id)
+        count_by_book[result.chunk.book_name] += 1
+        if len(selected) == top_k:
+            return selected
+
+    for result in results:
+        if result.chunk_id in seen_ids:
+            continue
+        selected.append(result)
+        seen_ids.add(result.chunk_id)
+        if len(selected) == top_k:
+            break
+    return selected
+
+
+def _rerank_candidate_target(reranker_client: RerankerClient | None) -> int:
+    if reranker_client is None:
+        return 0
+    return ONLINE_RERANK_CANDIDATE_TOP_N
 
 
 def _judge_answerability(
