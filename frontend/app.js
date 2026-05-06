@@ -6,10 +6,15 @@ const referenceList = document.querySelector("#reference-list");
 const referencesHeading = document.querySelector("#references-heading");
 const topKValue = document.querySelector("#top-k-value");
 const indexPathValue = document.querySelector("#index-path-value");
+const usageStatus = document.querySelector("#usage-status");
 const booksHeading = document.querySelector("#books-heading");
 const booksList = document.querySelector("#books-list");
 const resetButton = document.querySelector("#reset-button");
 const exportButton = document.querySelector("#export-button");
+const apiKeyInput = document.querySelector("#api-key-input");
+const verifyApiKeyButton = document.querySelector("#verify-api-key");
+const rememberApiKeyCheckbox = document.querySelector("#remember-api-key");
+const apiKeyStatus = document.querySelector("#api-key-status");
 const modal = document.querySelector("#reference-modal");
 const modalBook = document.querySelector("#modal-book");
 const modalTitle = document.querySelector("#modal-title");
@@ -18,8 +23,17 @@ const modalText = document.querySelector("#modal-text");
 const modalClose = document.querySelector("#modal-close");
 
 const TOP_K = 5;
+const VISITOR_ID_STORAGE_KEY = "fictionrag.visitor_id";
+const API_KEY_STORAGE_KEY = "fictionrag.bailian_api_key";
 const REFERENCE_PREVIEW_LENGTH = 80;
-const INITIAL_ASSISTANT_MESSAGE = "您好！我是您的清新墨绿助手。请问今天有什么可以帮您的？";
+const INITIAL_ASSISTANT_MESSAGE = `你好，我是你的无职转生 AI 助手，可以基于原文回答关于《无职转生》的各种问题。下面是一些使用说明：
+
+1. 一次只问一个问题，请不要在同一条消息里同时发送多个问题，目前多问题会互相影响。
+2. 提问时尽量让人物、时间、地点清晰，尤其人物姓名尽量不要打错。
+3. 默认体验次数为每日 5 次；如果需要无限使用，可以申请阿里百炼 API Key，并在左侧填写确认。
+4. 刷新页面会丢失当前会话；如需保留内容，可以点击左侧“导出”。
+5. 目前系统更适合回答书中明确涉及的局部问题，例如“鲁迪活了多少岁？”“龙神和人神为什么有矛盾？”“一共有几大列强？”。对于“鲁迪一路上的旅程经历了什么？”“龙神经历了什么？”这类范围很宽的综合问题，效果会比较一般。
+6. 项目仍在持续优化中，你的每一个问题都是改进系统的重要参考。谢谢！`;
 const COPY_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2" ry="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
 const REGENERATE_ICON = '<svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg>';
 
@@ -27,9 +41,13 @@ let sessionMessages = [];
 let latestReferences = [];
 let latestBookStats = null;
 let messageIdCounter = 0;
+let visitorId = getOrCreateVisitorId();
+let verifiedApiKey = "";
 
+initializeApiKeyState();
 resetSession({ silent: true });
 loadBookStats();
+loadVisitorUsage();
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -69,6 +87,29 @@ exportButton.addEventListener("click", () => {
   exportSession();
 });
 
+verifyApiKeyButton.addEventListener("click", () => {
+  verifyApiKey();
+});
+
+apiKeyInput.addEventListener("input", () => {
+  verifiedApiKey = "";
+  apiKeyStatus.textContent = "API Key 修改后需要重新确认。";
+  apiKeyStatus.className = "api-key-status";
+  if (!rememberApiKeyCheckbox.checked) {
+    removeStoredValue(API_KEY_STORAGE_KEY);
+  }
+  renderUsageStatus();
+});
+
+rememberApiKeyCheckbox.addEventListener("change", () => {
+  if (rememberApiKeyCheckbox.checked && verifiedApiKey) {
+    setStoredValue(API_KEY_STORAGE_KEY, verifiedApiKey);
+  }
+  if (!rememberApiKeyCheckbox.checked) {
+    removeStoredValue(API_KEY_STORAGE_KEY);
+  }
+});
+
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !modal.hidden) {
     closeReferenceModal();
@@ -86,6 +127,25 @@ async function loadBookStats() {
   } catch (error) {
     booksHeading.textContent = "当前书库";
     booksList.replaceChildren(createBookRow("读取失败", error.message));
+  }
+}
+
+async function loadVisitorUsage() {
+  try {
+    const response = await fetch("/api/visitor/usage", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ visitor_id: visitorId }),
+    });
+    const payload = await response.json();
+    if (!response.ok) {
+      throw new Error(payload.error || "体验次数加载失败。");
+    }
+    renderUsageStatus(payload);
+  } catch (error) {
+    usageStatus.textContent = "读取失败";
   }
 }
 
@@ -270,6 +330,9 @@ async function requestAnswer(question, options = {}) {
     renderReferences(payload.contexts || []);
     return payload;
   } catch (error) {
+    if (error.payload?.usage) {
+      renderUsageStatus(error.payload.usage);
+    }
     appendMessage("assistant", `请求失败：${error.message}`, {
       replayQuestion: question,
     });
@@ -291,14 +354,66 @@ async function askQuestion(question) {
     body: JSON.stringify({
       question,
       top_k: TOP_K,
+      visitor_id: visitorId,
+      api_key: verifiedApiKey || undefined,
     }),
   });
 
   const payload = await response.json();
   if (!response.ok) {
-    throw new Error(payload.error || "请求失败，请检查后端日志。");
+    const error = new Error(payload.error || "请求失败，请检查后端日志。");
+    error.payload = payload;
+    throw error;
+  }
+  if (payload.usage) {
+    renderUsageStatus(payload.usage);
   }
   return payload;
+}
+
+async function verifyApiKey() {
+  const apiKey = apiKeyInput.value.trim();
+  if (!apiKey) {
+    apiKeyStatus.textContent = "请先填写阿里百炼 API Key。";
+    apiKeyStatus.className = "api-key-status is-error";
+    apiKeyInput.focus();
+    return;
+  }
+
+  verifyApiKeyButton.disabled = true;
+  verifyApiKeyButton.textContent = "验证中";
+  apiKeyStatus.textContent = "正在测试 LLM、Embedding 和 Rerank 可用性...";
+  apiKeyStatus.className = "api-key-status";
+
+  try {
+    const response = await fetch("/api/custom-key/test", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    const payload = await response.json();
+    if (!response.ok || !payload.ok) {
+      throw new Error(payload.error || "API Key 不可用。");
+    }
+    verifiedApiKey = apiKey;
+    if (rememberApiKeyCheckbox.checked) {
+      setStoredValue(API_KEY_STORAGE_KEY, apiKey);
+    }
+    apiKeyStatus.textContent = "自定义 API Key 已启用。";
+    apiKeyStatus.className = "api-key-status is-success";
+    renderUsageStatus();
+  } catch (error) {
+    verifiedApiKey = "";
+    removeStoredValue(API_KEY_STORAGE_KEY);
+    apiKeyStatus.textContent = `验证失败：${error.message}`;
+    apiKeyStatus.className = "api-key-status is-error";
+    renderUsageStatus();
+  } finally {
+    verifyApiKeyButton.disabled = false;
+    verifyApiKeyButton.textContent = "确认";
+  }
 }
 
 async function regenerateAnswer(question, button) {
@@ -355,6 +470,76 @@ function resetSession(options = {}) {
 
   if (!options.silent) {
     questionInput.focus();
+  }
+}
+
+function initializeApiKeyState() {
+  const storedKey = getStoredValue(API_KEY_STORAGE_KEY);
+  if (!storedKey) {
+    return;
+  }
+  apiKeyInput.value = storedKey;
+  rememberApiKeyCheckbox.checked = true;
+  verifiedApiKey = storedKey;
+  apiKeyStatus.textContent = "已使用本地保存的自定义 API Key。";
+  apiKeyStatus.className = "api-key-status is-success";
+}
+
+function renderUsageStatus(usage = null) {
+  if (verifiedApiKey) {
+    usageStatus.textContent = "自定义 Key";
+    return;
+  }
+  if (!usage) {
+    return;
+  }
+  usageStatus.textContent = `${usage.remaining}/${usage.quota}`;
+}
+
+function getOrCreateVisitorId() {
+  const existing = getStoredValue(VISITOR_ID_STORAGE_KEY);
+  if (existing) {
+    return existing;
+  }
+  const created = createVisitorId();
+  setStoredValue(VISITOR_ID_STORAGE_KEY, created);
+  return created;
+}
+
+function createVisitorId() {
+  const cryptoApi = window.crypto;
+  if (cryptoApi?.randomUUID) {
+    return cryptoApi.randomUUID();
+  }
+  const random = new Uint8Array(16);
+  if (cryptoApi?.getRandomValues) {
+    cryptoApi.getRandomValues(random);
+    return Array.from(random, (value) => value.toString(16).padStart(2, "0")).join("");
+  }
+  return `visitor-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+function getStoredValue(key) {
+  try {
+    return window.localStorage.getItem(key) || "";
+  } catch (error) {
+    return "";
+  }
+}
+
+function setStoredValue(key, value) {
+  try {
+    window.localStorage.setItem(key, value);
+  } catch (error) {
+    // Local storage can be unavailable in private browsing modes.
+  }
+}
+
+function removeStoredValue(key) {
+  try {
+    window.localStorage.removeItem(key);
+  } catch (error) {
+    // Local storage can be unavailable in private browsing modes.
   }
 }
 

@@ -201,6 +201,95 @@ button:disabled {
   font-weight: 600;
 }
 
+.api-key-panel {
+  display: grid;
+  gap: 10px;
+}
+
+.api-key-panel input[type="password"] {
+  width: 100%;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-bg);
+  color: var(--ink);
+  outline: none;
+  font-family: var(--font-ui);
+  font-size: 13px;
+}
+
+.api-key-panel input[type="password"]:focus {
+  border-color: var(--primary);
+  box-shadow: 0 0 0 3px rgba(45, 90, 78, 0.1);
+}
+
+.api-key-actions {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.remember-key {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+}
+
+.remember-key input {
+  width: 14px;
+  height: 14px;
+  accent-color: var(--primary);
+}
+
+.api-key-actions button {
+  min-width: 64px;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 8px;
+  background: var(--primary);
+  color: #fff;
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.api-key-actions button:hover:not(:disabled) {
+  background: var(--primary-dark);
+}
+
+.api-key-link {
+  color: var(--primary);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  font-weight: 600;
+  text-decoration: none;
+}
+
+.api-key-link:hover {
+  text-decoration: underline;
+}
+
+.api-key-status {
+  min-height: 34px;
+  color: var(--muted);
+  font-family: var(--font-ui);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.api-key-status.is-success {
+  color: var(--primary);
+}
+
+.api-key-status.is-error {
+  color: #a33a3a;
+}
+
 .books-panel {
   flex: 1;
   display: flex;

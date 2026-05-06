@@ -5,4 +5,6 @@ __pycache__/
 .env
 data/index/*.jsonl
 !data/index/chunks.jsonl
+data/visitor_usage.sqlite3
+data/visitor_usage.sqlite3-*
 rag_eval_root/rag_eval/

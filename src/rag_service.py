@@ -15,6 +15,8 @@ from .chunker import Chunk
 from .config import (
     DEFAULT_INDEX_PATH,
     DEFAULT_TOP_K,
+    ModelRuntimeConfigs,
+    RerankerConfig,
     load_embedding_config,
     load_llm_config,
     load_reranker_config,
@@ -89,10 +91,13 @@ def retrieve_contexts(
     question: str,
     top_k: int = DEFAULT_TOP_K,
     index_path: Path = DEFAULT_INDEX_PATH,
+    model_configs: ModelRuntimeConfigs | None = None,
 ) -> list[RetrievalResult]:
     chunks = load_chunks(index_path)
-    embedding_client = EmbeddingClient(load_embedding_config())
-    reranker_client = _build_online_reranker()
+    embedding_config = model_configs.embedding if model_configs else load_embedding_config()
+    reranker_config = model_configs.reranker if model_configs else None
+    embedding_client = EmbeddingClient(embedding_config)
+    reranker_client = _build_online_reranker(reranker_config)
     return _retrieve_with_client(question, chunks, embedding_client, top_k, reranker_client)
 
 
@@ -100,11 +105,15 @@ def answer_question(
     question: str,
     top_k: int = DEFAULT_TOP_K,
     index_path: Path = DEFAULT_INDEX_PATH,
+    model_configs: ModelRuntimeConfigs | None = None,
 ) -> RagAnswer:
     chunks = load_chunks(index_path)
-    embedding_client = EmbeddingClient(load_embedding_config())
-    llm_client = LLMClient(load_llm_config())
-    reranker_client = _build_online_reranker()
+    embedding_config = model_configs.embedding if model_configs else load_embedding_config()
+    llm_config = model_configs.llm if model_configs else load_llm_config()
+    reranker_config = model_configs.reranker if model_configs else None
+    embedding_client = EmbeddingClient(embedding_config)
+    llm_client = LLMClient(llm_config)
+    reranker_client = _build_online_reranker(reranker_config)
 
     contexts = _retrieve_with_client(question, chunks, embedding_client, top_k, reranker_client)
     first_answerability = _judge_answerability(llm_client, question, contexts)
@@ -269,10 +278,10 @@ def _retrieve_with_client(
     )
 
 
-def _build_online_reranker() -> RerankerClient | None:
+def _build_online_reranker(reranker_config: RerankerConfig | None = None) -> RerankerClient | None:
     if not _online_rerank_enabled():
         return None
-    return RerankerClient(load_reranker_config())
+    return RerankerClient(reranker_config or load_reranker_config())
 
 
 def _online_rerank_enabled() -> bool:

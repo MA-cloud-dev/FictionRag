@@ -5,17 +5,25 @@ from __future__ import annotations
 import os
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BOOK_PATH = PROJECT_ROOT / "data" / "novels" / "book.txt"
 DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "index" / "chunks.jsonl"
 DEFAULT_ENTITIES_PATH = PROJECT_ROOT / "data" / "entities" / "entities.json"
+DEFAULT_VISITOR_DB_PATH = PROJECT_ROOT / "data" / "visitor_usage.sqlite3"
 DEFAULT_TOP_K = 5
+VISITOR_DAILY_QUOTA = 5
 CHUNK_SIZE = 800
 CHUNK_MAX_SIZE = 1000
 CHUNK_OVERLAP = 3
 DOTENV_PATH = PROJECT_ROOT / ".env"
+BAILIAN_COMPATIBLE_BASE_URL = "https://dashscope.aliyuncs.com/compatible-mode/v1"
+BAILIAN_RERANKER_BASE_URL = "https://dashscope.aliyuncs.com/compatible-api/v1"
+BAILIAN_LLM_MODEL = "qwen3.5-flash"
+BAILIAN_EMBEDDING_MODEL = "text-embedding-v4"
+BAILIAN_RERANKER_MODEL = "qwen3-rerank"
 
 
 class ConfigError(RuntimeError):
@@ -44,6 +52,14 @@ class LLMConfig:
     base_url: str
     model: str
     timeout_seconds: int = 120
+    extra_body: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ModelRuntimeConfigs:
+    embedding: EmbeddingConfig
+    reranker: RerankerConfig
+    llm: LLMConfig
 
 
 def load_dotenv(path: Path = DOTENV_PATH) -> None:
@@ -110,4 +126,28 @@ def load_llm_config() -> LLMConfig:
         api_key=_required_env("LLM_API_KEY"),
         base_url=_normalize_base_url(_required_env("LLM_BASE_URL")),
         model=_required_env("LLM_MODEL"),
+    )
+
+
+def build_bailian_model_configs(api_key: str) -> ModelRuntimeConfigs:
+    normalized_key = api_key.strip()
+    if not normalized_key:
+        raise ConfigError("api_key is required")
+    return ModelRuntimeConfigs(
+        embedding=EmbeddingConfig(
+            api_key=normalized_key,
+            base_url=BAILIAN_COMPATIBLE_BASE_URL,
+            model=BAILIAN_EMBEDDING_MODEL,
+        ),
+        reranker=RerankerConfig(
+            api_key=normalized_key,
+            base_url=BAILIAN_RERANKER_BASE_URL,
+            model=BAILIAN_RERANKER_MODEL,
+        ),
+        llm=LLMConfig(
+            api_key=normalized_key,
+            base_url=BAILIAN_COMPATIBLE_BASE_URL,
+            model=BAILIAN_LLM_MODEL,
+            extra_body={"enable_thinking": False},
+        ),
     )

@@ -28,6 +28,8 @@ class LLMClient:
             ],
             "temperature": temperature,
         }
+        if self.config.extra_body:
+            payload.update(self.config.extra_body)
         response = self._post("/chat/completions", payload)
         try:
             content = response["choices"][0]["message"]["content"]

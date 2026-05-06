@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>FictionRag | 清新墨绿知识助手</title>
+  <title>FictionRag | 无职转生 AI 助手</title>
   <link rel="icon" href="data:,">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -21,7 +21,7 @@
         </div>
         <div>
           <h1>FictionRAG</h1>
-          <p>清新墨绿问答助手</p>
+          <p>无职转生 AI 助手</p>
         </div>
       </section>
 
@@ -49,6 +49,24 @@
           <span class="status-label">重排序</span>
           <span class="status-value">Active</span>
         </div>
+        <div class="status-row">
+          <span class="status-label">体验次数</span>
+          <span class="status-value" id="usage-status">同步中...</span>
+        </div>
+      </section>
+
+      <section class="api-key-panel" aria-label="Custom Bailian API key">
+        <p class="section-label">自定义 API Key</p>
+        <input type="password" id="api-key-input" placeholder="填写阿里百炼 API Key" autocomplete="off" aria-label="阿里百炼 API Key">
+        <div class="api-key-actions">
+          <label class="remember-key">
+            <input type="checkbox" id="remember-api-key">
+            <span>记住</span>
+          </label>
+          <button type="button" id="verify-api-key">确认</button>
+        </div>
+        <a class="api-key-link" href="https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key" target="_blank" rel="noopener noreferrer">申请百炼 API Key</a>
+        <p class="api-key-status" id="api-key-status">未启用时使用每日免费体验次数。</p>
       </section>
 
       <section class="books-panel" aria-label="Loaded books">
@@ -92,7 +110,7 @@
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 8V4H8"/><rect width="16" height="12" x="4" y="8" rx="2"/><path d="M2 14h2"/><path d="M20 14h2"/><path d="M15 13v2"/><path d="M9 13v2"/></svg>
           </div>
           <div class="bubble">
-            <p>您好！我是您的清新墨绿助手。请问今天有什么可以帮您的？</p>
+            <p>你好，我是你的无职转生 AI 助手，可以基于原文回答关于《无职转生》的各种问题。</p>
           </div>
         </article>
       </div>
