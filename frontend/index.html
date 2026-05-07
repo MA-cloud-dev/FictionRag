@@ -96,9 +96,67 @@
     <!-- Chat Panel -->
     <section class="chat-panel parchment-panel" aria-label="Conversation">
       <header class="panel-heading">
-        <h2>对话详情</h2>
-        <p id="chat-subtitle">AI 正在为您解析文本</p>
+        <div>
+          <h2>对话详情</h2>
+          <p id="chat-subtitle">AI 正在为您解析文本</p>
+        </div>
+        <div class="mobile-settings">
+          <span class="mobile-usage-pill" id="mobile-usage-status">同步中...</span>
+          <button type="button" class="mobile-menu-button" id="mobile-settings-toggle" aria-label="打开访问设置" aria-expanded="false" aria-controls="mobile-settings-menu">
+            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M4 12h16"/><path d="M4 6h16"/><path d="M4 18h16"/></svg>
+          </button>
+        </div>
       </header>
+
+      <section class="mobile-settings-menu" id="mobile-settings-menu" aria-label="访问设置" hidden>
+        <div class="mobile-menu-head">
+          <div>
+            <strong>访问设置</strong>
+            <p>查看体验次数，或启用自定义百炼 API Key。</p>
+          </div>
+          <button type="button" id="mobile-settings-close" aria-label="关闭访问设置">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M18 6 6 18"/><path d="m6 6 12 12"/></svg>
+          </button>
+        </div>
+        <section class="status-panel mobile-status-panel" aria-label="Mobile retrieval settings">
+          <div class="status-row">
+            <span class="status-label">当前模式</span>
+            <span class="status-value" id="mobile-access-mode">游客体验</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">体验次数</span>
+            <span class="status-value" id="mobile-usage-detail">同步中...</span>
+          </div>
+          <div class="status-row">
+            <span class="status-label">Top K</span>
+            <span class="status-value">5</span>
+          </div>
+        </section>
+        <section class="api-key-panel mobile-api-key-panel" aria-label="Mobile Bailian API key">
+          <p class="section-label">自定义 API Key</p>
+          <input type="password" id="mobile-api-key-input" placeholder="填写阿里百炼 API Key" autocomplete="off" aria-label="阿里百炼 API Key">
+          <div class="api-key-actions">
+            <label class="remember-key">
+              <input type="checkbox" id="mobile-remember-api-key">
+              <span>记住</span>
+            </label>
+            <button type="button" id="mobile-verify-api-key">确认</button>
+          </div>
+          <a class="api-key-link" href="https://bailian.console.aliyun.com/cn-beijing/?tab=model#/api-key" target="_blank" rel="noopener noreferrer">跳转百炼控制台获取 API Key</a>
+          <p class="api-key-status" id="mobile-api-key-status">未启用时使用每日免费体验次数。</p>
+        </section>
+        <section class="mobile-chunk-panel" aria-label="当前 Chunk 内容">
+          <div class="mobile-chunk-heading">
+            <p class="section-label">当前 Chunk 内容</p>
+            <span id="mobile-chunk-count">0</span>
+          </div>
+          <div class="mobile-chunk-list" id="mobile-chunk-list">
+            <article class="mobile-chunk-card empty">
+              <p>提问后，可在这里查看本次召回的原文片段。</p>
+            </article>
+          </div>
+        </section>
+      </section>
 
       <figure class="character-standee" aria-hidden="true">
         <img src="assets/character.png" alt="">

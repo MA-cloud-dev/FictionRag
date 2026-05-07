@@ -15,6 +15,18 @@ const apiKeyInput = document.querySelector("#api-key-input");
 const verifyApiKeyButton = document.querySelector("#verify-api-key");
 const rememberApiKeyCheckbox = document.querySelector("#remember-api-key");
 const apiKeyStatus = document.querySelector("#api-key-status");
+const mobileUsageStatus = document.querySelector("#mobile-usage-status");
+const mobileAccessMode = document.querySelector("#mobile-access-mode");
+const mobileUsageDetail = document.querySelector("#mobile-usage-detail");
+const mobileSettingsToggle = document.querySelector("#mobile-settings-toggle");
+const mobileSettingsMenu = document.querySelector("#mobile-settings-menu");
+const mobileSettingsClose = document.querySelector("#mobile-settings-close");
+const mobileApiKeyInput = document.querySelector("#mobile-api-key-input");
+const mobileVerifyApiKeyButton = document.querySelector("#mobile-verify-api-key");
+const mobileRememberApiKeyCheckbox = document.querySelector("#mobile-remember-api-key");
+const mobileApiKeyStatus = document.querySelector("#mobile-api-key-status");
+const mobileChunkCount = document.querySelector("#mobile-chunk-count");
+const mobileChunkList = document.querySelector("#mobile-chunk-list");
 const modal = document.querySelector("#reference-modal");
 const modalBook = document.querySelector("#modal-book");
 const modalTitle = document.querySelector("#modal-title");
@@ -43,6 +55,7 @@ let latestBookStats = null;
 let messageIdCounter = 0;
 let visitorId = getOrCreateVisitorId();
 let verifiedApiKey = "";
+let latestUsage = null;
 
 initializeApiKeyState();
 resetSession({ silent: true });
@@ -91,28 +104,55 @@ verifyApiKeyButton.addEventListener("click", () => {
   verifyApiKey();
 });
 
+mobileVerifyApiKeyButton.addEventListener("click", () => {
+  verifyApiKey();
+});
+
 apiKeyInput.addEventListener("input", () => {
-  verifiedApiKey = "";
-  apiKeyStatus.textContent = "API Key 修改后需要重新确认。";
-  apiKeyStatus.className = "api-key-status";
-  if (!rememberApiKeyCheckbox.checked) {
-    removeStoredValue(API_KEY_STORAGE_KEY);
-  }
-  renderUsageStatus();
+  handleApiKeyInput(apiKeyInput.value, apiKeyInput);
+});
+
+mobileApiKeyInput.addEventListener("input", () => {
+  handleApiKeyInput(mobileApiKeyInput.value, mobileApiKeyInput);
 });
 
 rememberApiKeyCheckbox.addEventListener("change", () => {
-  if (rememberApiKeyCheckbox.checked && verifiedApiKey) {
-    setStoredValue(API_KEY_STORAGE_KEY, verifiedApiKey);
-  }
-  if (!rememberApiKeyCheckbox.checked) {
-    removeStoredValue(API_KEY_STORAGE_KEY);
+  handleRememberApiKeyChange(rememberApiKeyCheckbox.checked);
+});
+
+mobileRememberApiKeyCheckbox.addEventListener("change", () => {
+  handleRememberApiKeyChange(mobileRememberApiKeyCheckbox.checked);
+});
+
+mobileSettingsToggle.addEventListener("click", () => {
+  setMobileSettingsOpen(mobileSettingsMenu.hidden);
+});
+
+mobileSettingsClose.addEventListener("click", () => {
+  setMobileSettingsOpen(false);
+});
+
+mobileSettingsMenu.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
+mobileSettingsToggle.addEventListener("click", (event) => {
+  event.stopPropagation();
+});
+
+document.addEventListener("click", () => {
+  if (!mobileSettingsMenu.hidden) {
+    setMobileSettingsOpen(false);
   }
 });
 
 document.addEventListener("keydown", (event) => {
   if (event.key === "Escape" && !modal.hidden) {
     closeReferenceModal();
+  }
+  if (event.key === "Escape" && !mobileSettingsMenu.hidden) {
+    setMobileSettingsOpen(false);
+    mobileSettingsToggle.focus();
   }
 });
 
@@ -233,6 +273,7 @@ function renderReferences(contexts, options = {}) {
 
   referenceList.replaceChildren();
   referencesHeading.textContent = "关联片段";
+  renderMobileChunks(options);
 
   if (!latestReferences.length) {
     const empty = document.createElement("article");
@@ -278,6 +319,64 @@ function renderReferences(contexts, options = {}) {
     card.append(rank, body);
     makeReferenceCardInteractive(card, context);
     referenceList.append(card);
+  });
+}
+
+function renderMobileChunks(options = {}) {
+  mobileChunkList.replaceChildren();
+  mobileChunkCount.textContent = String(latestReferences.length);
+
+  if (!latestReferences.length) {
+    const empty = document.createElement("article");
+    empty.className = "mobile-chunk-card empty";
+    empty.innerHTML = `<p>${options.emptyText || "提问后，可在这里查看本次召回的原文片段。"}</p>`;
+    mobileChunkList.append(empty);
+    return;
+  }
+
+  latestReferences.forEach((context) => {
+    const card = document.createElement("article");
+    card.className = "mobile-chunk-card";
+    card.tabIndex = 0;
+    card.setAttribute("role", "button");
+    card.setAttribute("aria-label", `查看 ${context.chunk_id || "原文片段"} 完整内容`);
+
+    const title = document.createElement("div");
+    title.className = "mobile-chunk-title";
+
+    const rank = document.createElement("strong");
+    rank.textContent = `#${context.rank || mobileChunkList.children.length + 1}`;
+
+    const book = document.createElement("span");
+    book.textContent = context.book_name || "未知书卷";
+
+    const chunkId = document.createElement("p");
+    chunkId.className = "mobile-chunk-id";
+    chunkId.textContent = context.chunk_id || "-";
+
+    const preview = document.createElement("p");
+    preview.className = "mobile-chunk-preview";
+    preview.textContent = buildPreview(context.text, 110);
+
+    const meta = document.createElement("span");
+    meta.className = "mobile-chunk-score";
+    meta.textContent = `SCORE ${formatScore(context.score)}`;
+
+    title.append(rank, book);
+    card.append(title, chunkId, preview, meta);
+
+    card.addEventListener("click", () => {
+      setMobileSettingsOpen(false);
+      openReferenceModal(context);
+    });
+    card.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        setMobileSettingsOpen(false);
+        openReferenceModal(context);
+      }
+    });
+    mobileChunkList.append(card);
   });
 }
 
@@ -372,18 +471,15 @@ async function askQuestion(question) {
 }
 
 async function verifyApiKey() {
-  const apiKey = apiKeyInput.value.trim();
+  const apiKey = getCurrentApiKeyInput();
   if (!apiKey) {
-    apiKeyStatus.textContent = "请先填写阿里百炼 API Key。";
-    apiKeyStatus.className = "api-key-status is-error";
-    apiKeyInput.focus();
+    setApiKeyStatus("请先填写阿里百炼 API Key。", "is-error");
+    (mobileSettingsMenu.hidden ? apiKeyInput : mobileApiKeyInput).focus();
     return;
   }
 
-  verifyApiKeyButton.disabled = true;
-  verifyApiKeyButton.textContent = "验证中";
-  apiKeyStatus.textContent = "正在测试 LLM、Embedding 和 Rerank 可用性...";
-  apiKeyStatus.className = "api-key-status";
+  setVerifyButtonsLoading(true);
+  setApiKeyStatus("正在测试 LLM、Embedding 和 Rerank 可用性...", "");
 
   try {
     const response = await fetch("/api/custom-key/test", {
@@ -398,21 +494,19 @@ async function verifyApiKey() {
       throw new Error(payload.error || "API Key 不可用。");
     }
     verifiedApiKey = apiKey;
+    syncApiKeyInputs(apiKey);
     if (rememberApiKeyCheckbox.checked) {
       setStoredValue(API_KEY_STORAGE_KEY, apiKey);
     }
-    apiKeyStatus.textContent = "自定义 API Key 已启用。";
-    apiKeyStatus.className = "api-key-status is-success";
-    renderUsageStatus();
+    setApiKeyStatus("自定义 API Key 已启用。", "is-success");
+    renderUsageStatus(latestUsage);
   } catch (error) {
     verifiedApiKey = "";
     removeStoredValue(API_KEY_STORAGE_KEY);
-    apiKeyStatus.textContent = `验证失败：${error.message}`;
-    apiKeyStatus.className = "api-key-status is-error";
-    renderUsageStatus();
+    setApiKeyStatus(`验证失败：${error.message}`, "is-error");
+    renderUsageStatus(latestUsage);
   } finally {
-    verifyApiKeyButton.disabled = false;
-    verifyApiKeyButton.textContent = "确认";
+    setVerifyButtonsLoading(false);
   }
 }
 
@@ -478,22 +572,93 @@ function initializeApiKeyState() {
   if (!storedKey) {
     return;
   }
-  apiKeyInput.value = storedKey;
-  rememberApiKeyCheckbox.checked = true;
+  syncApiKeyInputs(storedKey);
+  syncRememberApiKey(true);
   verifiedApiKey = storedKey;
-  apiKeyStatus.textContent = "已使用本地保存的自定义 API Key。";
-  apiKeyStatus.className = "api-key-status is-success";
+  setApiKeyStatus("已使用本地保存的自定义 API Key。", "is-success");
 }
 
 function renderUsageStatus(usage = null) {
+  if (usage) {
+    latestUsage = usage;
+  }
   if (verifiedApiKey) {
     usageStatus.textContent = "自定义 Key";
+    mobileUsageStatus.textContent = "自定义 Key";
+    mobileAccessMode.textContent = "自定义 Key";
+    mobileUsageDetail.textContent = "无限次";
     return;
   }
   if (!usage) {
     return;
   }
-  usageStatus.textContent = `${usage.remaining}/${usage.quota}`;
+  const usageText = `${usage.remaining}/${usage.quota}`;
+  usageStatus.textContent = usageText;
+  mobileUsageStatus.textContent = `游客 ${usageText}`;
+  mobileAccessMode.textContent = "游客体验";
+  mobileUsageDetail.textContent = usageText;
+}
+
+function handleApiKeyInput(value, sourceInput) {
+  verifiedApiKey = "";
+  syncApiKeyInputs(value, sourceInput);
+  setApiKeyStatus("API Key 修改后需要重新确认。", "");
+  if (!rememberApiKeyCheckbox.checked) {
+    removeStoredValue(API_KEY_STORAGE_KEY);
+  }
+  renderUsageStatus(latestUsage);
+}
+
+function handleRememberApiKeyChange(isChecked) {
+  syncRememberApiKey(isChecked);
+  if (isChecked && verifiedApiKey) {
+    setStoredValue(API_KEY_STORAGE_KEY, verifiedApiKey);
+  }
+  if (!isChecked) {
+    removeStoredValue(API_KEY_STORAGE_KEY);
+  }
+}
+
+function syncApiKeyInputs(value, sourceInput = null) {
+  [apiKeyInput, mobileApiKeyInput].forEach((input) => {
+    if (input !== sourceInput) {
+      input.value = value;
+    }
+  });
+}
+
+function syncRememberApiKey(isChecked) {
+  rememberApiKeyCheckbox.checked = isChecked;
+  mobileRememberApiKeyCheckbox.checked = isChecked;
+}
+
+function setApiKeyStatus(message, stateClass) {
+  [apiKeyStatus, mobileApiKeyStatus].forEach((statusNode) => {
+    statusNode.textContent = message;
+    statusNode.className = `api-key-status${stateClass ? ` ${stateClass}` : ""}`;
+  });
+}
+
+function setVerifyButtonsLoading(isLoading) {
+  [verifyApiKeyButton, mobileVerifyApiKeyButton].forEach((button) => {
+    button.disabled = isLoading;
+    button.textContent = isLoading ? "验证中" : "确认";
+  });
+}
+
+function getCurrentApiKeyInput() {
+  if (!mobileSettingsMenu.hidden && mobileApiKeyInput.value.trim()) {
+    return mobileApiKeyInput.value.trim();
+  }
+  return (apiKeyInput.value.trim() || mobileApiKeyInput.value.trim());
+}
+
+function setMobileSettingsOpen(isOpen) {
+  mobileSettingsMenu.hidden = !isOpen;
+  mobileSettingsToggle.setAttribute("aria-expanded", String(isOpen));
+  if (isOpen) {
+    renderUsageStatus(latestUsage);
+  }
 }
 
 function getOrCreateVisitorId() {
@@ -644,12 +809,12 @@ function createMessageId() {
   return `message-${messageIdCounter}`;
 }
 
-function buildPreview(text) {
+function buildPreview(text, maxLength = REFERENCE_PREVIEW_LENGTH) {
   const normalized = String(text || "").replace(/\s+/g, " ").trim();
-  if (normalized.length <= REFERENCE_PREVIEW_LENGTH) {
+  if (normalized.length <= maxLength) {
     return normalized;
   }
-  return `${normalized.slice(0, REFERENCE_PREVIEW_LENGTH)}...`;
+  return `${normalized.slice(0, maxLength)}...`;
 }
 
 function setLoading(isLoading) {
