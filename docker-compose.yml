@@ -11,6 +11,7 @@ services:
     environment:
       FICTIONRAG_HOST: 0.0.0.0
       FICTIONRAG_PORT: 5000
+      FICTIONRAG_VISITOR_DB_PATH: /app/data/runtime/visitor_usage.sqlite3
       GUNICORN_WORKERS: 2
       GUNICORN_THREADS: 4
       GUNICORN_TIMEOUT: 180
@@ -18,3 +19,7 @@ services:
       - "5000:5000"
     volumes:
       - ./data:/app/data
+      - visitor-db:/app/data/runtime
+
+volumes:
+  visitor-db:

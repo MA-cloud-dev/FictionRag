@@ -4,7 +4,8 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \
     PIP_NO_CACHE_DIR=1 \
     FICTIONRAG_HOST=0.0.0.0 \
-    FICTIONRAG_PORT=5000
+    FICTIONRAG_PORT=5000 \
+    FICTIONRAG_VISITOR_DB_PATH=/app/data/runtime/visitor_usage.sqlite3
 
 WORKDIR /app
 
@@ -18,8 +19,10 @@ RUN pip install --upgrade pip \
 COPY src ./src
 COPY frontend ./frontend
 
-RUN mkdir -p data/novels data/index data/entities \
+RUN mkdir -p data/novels data/index data/entities data/runtime \
     && chown -R app:app /app
+
+VOLUME ["/app/data/runtime"]
 
 USER app
 

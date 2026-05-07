@@ -12,7 +12,9 @@ PROJECT_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_BOOK_PATH = PROJECT_ROOT / "data" / "novels" / "book.txt"
 DEFAULT_INDEX_PATH = PROJECT_ROOT / "data" / "index" / "chunks.jsonl"
 DEFAULT_ENTITIES_PATH = PROJECT_ROOT / "data" / "entities" / "entities.json"
-DEFAULT_VISITOR_DB_PATH = PROJECT_ROOT / "data" / "visitor_usage.sqlite3"
+DEFAULT_VISITOR_DB_PATH = Path(
+    os.getenv("FICTIONRAG_VISITOR_DB_PATH", PROJECT_ROOT / "data" / "visitor_usage.sqlite3")
+)
 DEFAULT_TOP_K = 5
 VISITOR_DAILY_QUOTA = 5
 CHUNK_SIZE = 800
